@@ -11,12 +11,12 @@
 // ============================================================================
 
 export const firebaseConfig = {
-  apiKey: "COLE_AQUI_A_apiKey",
-  authDomain: "COLE_AQUI_O_authDomain",
-  projectId: "COLE_AQUI_O_projectId",
-  storageBucket: "COLE_AQUI_O_storageBucket",
-  messagingSenderId: "COLE_AQUI_O_messagingSenderId",
-  appId: "COLE_AQUI_O_appId",
+  apiKey: "AIzaSyCaLWYZmqzSBFDsAPTzj11Hxf7ckkqmh4I",
+  authDomain: "precifica-archetti.firebaseapp.com",
+  projectId: "precifica-archetti",
+  storageBucket: "precifica-archetti.firebasestorage.app",
+  messagingSenderId: "655418028873",
+  appId: "1:655418028873:web:514f2d403dc651ce772098",
 };
 
 // E-mails autorizados a virar "mentor" (painel com a turma inteira) no
