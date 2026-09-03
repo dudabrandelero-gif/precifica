@@ -1,0 +1,61 @@
+rules_version = '2';
+
+// ============================================================================
+// REGRAS DE SEGURANÇA DO PRECIFICA
+//
+// Como aplicar: console.firebase.google.com → seu projeto → Firestore Database
+// → aba "Regras" → cole este arquivo inteiro no lugar do que estiver lá →
+// "Publicar".
+//
+// O que essas regras garantem:
+// - Cada aluno só lê e escreve os PRÓPRIOS dados detalhados
+//   (users/{uid} e users/{uid}/modelos/*).
+// - O resumo (resumos/{uid} — meta, receita, líquido, bateu a meta) pode ser
+//   lido também por quem tem o papel "mentor" — é o que alimenta o painel do
+//   mentor. Ninguém além do próprio aluno e de mentores enxerga isso.
+// - Só os e-mails listados em ALLOWED_MENTOR_EMAILS podem virar "mentor" no
+//   cadastro. Ajuste a lista abaixo (e a mesma lista em firebase-config.js)
+//   se mais pessoas da sua equipe precisarem ver o painel.
+// ============================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+    function isAllowedMentorEmail() {
+      // <<< ajuste esta lista para bater com MENTOR_EMAILS em firebase-config.js
+      return isSignedIn() && request.auth.token.email in [
+        'ubiratan@archettiodonto.com.br'
+      ];
+    }
+    function isMentor() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'mentor';
+    }
+
+    match /users/{uid} {
+      allow read: if isOwner(uid);
+      allow create: if isOwner(uid)
+        && request.resource.data.role in ['aluno', 'mentor']
+        && (request.resource.data.role == 'aluno' || isAllowedMentorEmail());
+      allow update: if isOwner(uid)
+        && request.resource.data.role == resource.data.role; // papel não muda depois de criado
+      allow delete: if false;
+
+      match /modelos/{modelKey} {
+        allow read, write: if isOwner(uid);
+      }
+    }
+
+    match /resumos/{uid} {
+      allow read: if isOwner(uid) || isMentor();
+      allow write: if isOwner(uid);
+    }
+  }
+}
