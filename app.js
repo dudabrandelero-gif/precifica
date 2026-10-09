@@ -199,7 +199,7 @@ const MODELS = {
   },
 };
 
-const STEP_ORDER = ['sonhos','meta','vida','negocio','insumos','hora','calcular','resumo','crescer'];
+const STEP_ORDER = ['sonhos','vida','meta','negocio','insumos','hora','calcular','resumo','crescer'];
 
 function stepsFor(modelKey){
   const m = MODELS[modelKey];
@@ -256,8 +256,27 @@ const CALC_EXAMPLES = {
 /* Estado padrão                                                          */
 /* ---------------------------------------------------------------------- */
 
+const SONHO_TIPOS = [
+  {key:'', label:'Selecione…'},
+  {key:'moradia', label:'Moradia'},
+  {key:'automovel', label:'Automóvel'},
+  {key:'viagem', label:'Viagem'},
+  {key:'outro', label:'Outro (escreva)'},
+];
+// Correção do custo dos sonhos: IGP-M (inflação) + 10% de juros ao ano, compostos.
+// O IGP-M é editável pelo aluno (acumulado 12 meses, divulgado pela FGV).
+const SONHOS_IGPM_PADRAO = 0.04;
+const SONHOS_JUROS_ANUAL = 0.10;
+
 function defaultSonhos(){
-  return [0,1,2,3,4,5].map(() => ({desc:'', custo:0, prazo:0}));
+  return [0,1,2,3,4,5].map(() => ({tipo:'', desc:'', custo:0, prazo:0}));
+}
+function normalizeSonhos(rows){
+  // Sonhos salvos antes da lista de opções: o texto livre vira "Outro".
+  (rows||[]).forEach(r => {
+    if (r.tipo == null) r.tipo = (r.desc && String(r.desc).trim()) ? 'outro' : '';
+  });
+  return rows;
 }
 function defaultMeta(modelKey){
   const m = MODELS[modelKey];
@@ -287,6 +306,7 @@ function defaultCalc(modelKey){
 function defaultState(modelKey){
   return {
     sonhos: defaultSonhos(),
+    sonhosTaxas: {igpm: SONHOS_IGPM_PADRAO},
     meta: defaultMeta(modelKey),
     vida: VIDA_FLAT.map(() => 0),
     negocio: negocioFlat(modelKey).map(() => 0),
@@ -303,6 +323,8 @@ function mergeWithDefaults(modelKey, parsed){
   if (!merged.vida || merged.vida.length !== def.vida.length) merged.vida = def.vida;
   if (!merged.negocio || merged.negocio.length !== def.negocio.length) merged.negocio = def.negocio;
   if (!merged.sonhos) merged.sonhos = def.sonhos;
+  normalizeSonhos(merged.sonhos);
+  merged.sonhosTaxas = Object.assign({}, def.sonhosTaxas, merged.sonhosTaxas);
   if (!merged.calcular || !merged.calcular.length) merged.calcular = def.calcular;
   if (!merged.insumos) merged.insumos = def.insumos;
   merged.hora = Object.assign({}, def.hora, merged.hora);
@@ -333,8 +355,20 @@ function markSaveError(){
 function sumArr(a){ return (a||[]).reduce((s,v) => s + (parseBR(v)||0), 0); }
 function sumVida(state){ return sumArr(state.vida); }
 function sumNegocio(state){ return sumArr(state.negocio); }
+function sonhosTaxaAnual(state){
+  const igpm = parseBR(((state.sonhosTaxas)||{}).igpm != null ? state.sonhosTaxas.igpm : SONHOS_IGPM_PADRAO);
+  return (1 + igpm) * (1 + SONHOS_JUROS_ANUAL) - 1;
+}
+function sonhoCustoCorrigido(state, r){
+  const custo = parseBR(r.custo), prazo = parseBR(r.prazo);
+  if (!custo || !prazo) return custo || 0;
+  return custo * Math.pow(1 + sonhosTaxaAnual(state), prazo/12);
+}
+function sonhoMensal(state, r){
+  return safeDiv(sonhoCustoCorrigido(state, r), parseBR(r.prazo));
+}
 function sumSonhosMensal(state){
-  return (state.sonhos||[]).reduce((s,r) => s + safeDiv(parseBR(r.custo), parseBR(r.prazo)), 0);
+  return (state.sonhos||[]).reduce((s,r) => s + sonhoMensal(state, r), 0);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -1114,7 +1148,7 @@ function renderCategoryStep(panel, opts){
 
 function renderStepVida(panel){
   renderCategoryStep(panel, {
-    eyebrow:'2º passo — Conhecer', title:'Minha Vida Pessoal',
+    eyebrow:'1º passo — Conhecer', title:'Minha Vida Pessoal',
     desc:'Cada centavo que sai do seu bolso no mês. Não esqueça nada — lista incompleta destrói o cálculo lá na frente.',
     cats: VIDA_CATS, stateKey:'vida', totalLabel:'Total vida pessoal (mensal)',
   });
@@ -1136,42 +1170,73 @@ function renderStepSonhos(panel){
   panelHead(panel, 'Introdução', 'Meus Sonhos',
     'Antes de qualquer cálculo: por que você trabalha tanto? Pelo que você luta? O valor que sobrar aqui embaixo é o que precisa SOBRAR todo mês, além de pagar tudo — pra você realizar isso.');
   const body = el('div', {class:'panel-body'});
+  const st = APP.state;
+  const taxas = st.sonhosTaxas;
+
+  // Taxas de correção
+  const taxaBox = el('div', {class:'cat-group'});
+  taxaBox.appendChild(el('div', {class:'cat-title'}, ['Correção do custo ao longo do prazo']));
+  const igpmRow = el('div', {class:'field-row'});
+  igpmRow.appendChild(el('label', {}, ['IGP-M acumulado 12 meses (inflação)', el('div',{class:'help'},['Atualize com o índice mais recente divulgado pela FGV.'])]));
+  igpmRow.appendChild(numberInput({value:taxas.igpm, kind:'pct', onInput:(n)=>{ taxas.igpm=n; persist(); updateAll(); }}));
+  taxaBox.appendChild(igpmRow);
+  const jurosRow = el('div', {class:'field-row'});
+  jurosRow.appendChild(el('label', {}, ['Juros ao ano']));
+  jurosRow.appendChild(numberInput({value:SONHOS_JUROS_ANUAL, kind:'pct', locked:true}));
+  taxaBox.appendChild(jurosRow);
+  const totRow = el('div', {class:'field-total'});
+  totRow.appendChild(el('label', {}, ['Taxa total de correção ao ano (IGP-M + 10% de juros)']));
+  totRow.appendChild(el('span', {id:'sonho-taxa-total', class:'mono', style:'font-weight:700;'}, [fmtNum(sonhosTaxaAnual(st)*100,2) + '%']));
+  taxaBox.appendChild(totRow);
+  body.appendChild(taxaBox);
 
   const wrap = el('div', {class:'table-wrap'});
   const table = el('table', {class:'grid'});
   table.appendChild(el('thead', {}, [el('tr', {}, [
-    el('th',{},['#']), el('th',{},['Meu sonho (escreva com suas palavras)']), el('th',{},['Custo total (R$)']),
-    el('th',{},['Prazo (meses)']), el('th',{},['Valor mensal necessário']),
+    el('th',{},['#']), el('th',{},['Meu sonho']), el('th',{},['Custo hoje (R$)']),
+    el('th',{},['Prazo (meses)']), el('th',{},['Custo corrigido (R$)']), el('th',{},['Valor mensal necessário']),
   ])]));
   const tbody = el('tbody');
-  const rows = APP.state.sonhos;
+  const rows = st.sonhos;
 
   function updateRow(i){
     const r = rows[i];
-    const outEl = document.querySelector('[data-sonho-out="'+i+'"]');
-    if (outEl) outEl.textContent = fmtBRL(safeDiv(parseBR(r.custo), parseBR(r.prazo)));
-    updateTotals();
+    const c = document.querySelector('[data-sonho-corr="'+i+'"]');
+    if (c) c.textContent = fmtBRL(sonhoCustoCorrigido(st, r));
+    const o = document.querySelector('[data-sonho-out="'+i+'"]');
+    if (o) o.textContent = fmtBRL(sonhoMensal(st, r));
   }
   function updateTotals(){
-    const totCusto = rows.reduce((s,r)=>s+parseBR(r.custo),0);
-    const totMensal = sumSonhosMensal(APP.state);
-    const a = document.getElementById('sonho-total-custo'); if (a) a.textContent = fmtBRL(totCusto);
-    const b = document.getElementById('sonho-total-mensal'); if (b) b.textContent = fmtBRL(totMensal);
+    const set = (id, v) => { const x = document.getElementById(id); if (x) x.textContent = v; };
+    set('sonho-total-custo', fmtBRL(rows.reduce((s,r)=>s+parseBR(r.custo),0)));
+    set('sonho-total-corr', fmtBRL(rows.reduce((s,r)=>s+sonhoCustoCorrigido(st,r),0)));
+    set('sonho-total-mensal', fmtBRL(sumSonhosMensal(st)));
+    set('sonho-taxa-total', fmtNum(sonhosTaxaAnual(st)*100,2) + '%');
   }
+  function updateAll(){ rows.forEach((_,i)=>updateRow(i)); updateTotals(); }
 
   rows.forEach((r, i) => {
     const tr = el('tr');
     tr.appendChild(el('td', {}, [String(i+1)]));
     const descTd = el('td', {class:'col-name'});
-    const descInput = el('input', {class:'inp text-left', value:r.desc, placeholder:'ex.: viagem em família, trocar de carro…'});
+    const sel = el('select', {class:'inp'});
+    SONHO_TIPOS.forEach(t => sel.appendChild(el('option', {value:t.key, selected: t.key===(r.tipo||'') ? 'selected' : null}, [t.label])));
+    const descInput = el('input', {class:'inp text-left', value:r.desc||'', placeholder:'escreva seu sonho…', style:'margin-top:6px;'});
+    descInput.style.display = r.tipo === 'outro' ? '' : 'none';
+    sel.addEventListener('change', () => {
+      r.tipo = sel.value;
+      if (r.tipo === 'outro'){ descInput.style.display = ''; descInput.focus(); }
+      else { descInput.style.display = 'none'; r.desc = ''; descInput.value = ''; }
+      persist();
+    });
     descInput.addEventListener('input', () => { r.desc = descInput.value; persist(); });
+    descTd.appendChild(sel);
     descTd.appendChild(descInput);
     tr.appendChild(descTd);
-    tr.appendChild(el('td', {}, [numberInput({value:r.custo, kind:'brl', onInput:(n)=>{ r.custo=n; persist(); updateRow(i); }})]));
-    tr.appendChild(el('td', {}, [numberInput({value:r.prazo, kind:'num', dec:0, onInput:(n)=>{ r.prazo=n; persist(); updateRow(i); }})]));
-    const outTd = el('td');
-    outTd.appendChild(el('span', {class:'mono', style:'font-weight:700;color:var(--green-strong);', 'data-sonho-out':String(i)}, [fmtBRL(safeDiv(parseBR(r.custo),parseBR(r.prazo)))]));
-    tr.appendChild(outTd);
+    tr.appendChild(el('td', {}, [numberInput({value:r.custo, kind:'brl', onInput:(n)=>{ r.custo=n; persist(); updateRow(i); updateTotals(); }})]));
+    tr.appendChild(el('td', {}, [numberInput({value:r.prazo, kind:'num', dec:0, onInput:(n)=>{ r.prazo=n; persist(); updateRow(i); updateTotals(); }})]));
+    tr.appendChild(el('td', {}, [el('span', {class:'mono', style:'font-weight:600;', 'data-sonho-corr':String(i)}, [fmtBRL(sonhoCustoCorrigido(st, r))])]));
+    tr.appendChild(el('td', {}, [el('span', {class:'mono', style:'font-weight:700;color:var(--green-strong);', 'data-sonho-out':String(i)}, [fmtBRL(sonhoMensal(st, r))])]));
     tbody.appendChild(tr);
   });
   table.appendChild(tbody);
@@ -1179,14 +1244,16 @@ function renderStepSonhos(panel){
     el('td',{colspan:'2', style:'text-align:right;font-weight:800;'},['TOTAL']),
     el('td',{}, [el('span',{id:'sonho-total-custo', class:'mono', style:'font-weight:700;'},[fmtBRL(rows.reduce((s,r)=>s+parseBR(r.custo),0))])]),
     el('td'),
-    el('td',{}, [el('span',{id:'sonho-total-mensal', class:'mono', style:'font-weight:800;color:var(--green-strong);'},[fmtBRL(sumSonhosMensal(APP.state))])]),
+    el('td',{}, [el('span',{id:'sonho-total-corr', class:'mono', style:'font-weight:700;'},[fmtBRL(rows.reduce((s,r)=>s+sonhoCustoCorrigido(st,r),0))])]),
+    el('td',{}, [el('span',{id:'sonho-total-mensal', class:'mono', style:'font-weight:800;color:var(--green-strong);'},[fmtBRL(sumSonhosMensal(st))])]),
   ])]);
   table.appendChild(tfoot);
   wrap.appendChild(table);
   body.appendChild(wrap);
 
+  body.appendChild(el('p', {class:'help'}, ['O custo corrigido aplica a taxa total ao ano sobre o custo de hoje, proporcional ao prazo: custo × (1 + taxa)^(meses ÷ 12). O valor mensal é o custo corrigido dividido pelo prazo.']));
   body.appendChild(el('div', {class:'callout'}, [
-    el('b',{},['Essa meta mensal dos sonhos']), ' não substitui a meta de lucro da próxima etapa — ela é uma referência: o que você quer que sobre, de verdade, pra viver a vida que você sonha.',
+    el('b',{},['Essa meta mensal dos sonhos']), ' não substitui a meta de lucro da etapa Minha Meta — ela é uma referência: o que você quer que sobre, de verdade, pra viver a vida que você sonha.',
   ]));
   panel.appendChild(body);
   footNav(panel, {});
@@ -1198,7 +1265,7 @@ function renderStepSonhos(panel){
 
 function renderStepMeta(panel){
   const m = MODELS[APP.model];
-  panelHead(panel, '1º passo — Conhecer', 'Minha Meta',
+  panelHead(panel, '2º passo — Conhecer', 'Minha Meta',
     'Quanto precisa sobrar pra VOCÊ todo mês, depois de pagar tudo — sua vida pessoal, o negócio, os impostos e os repasses.');
   panel.querySelector('.panel-head').appendChild(legendRow());
   const body = el('div', {class:'panel-body'});
