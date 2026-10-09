@@ -268,12 +268,21 @@ function normalizeSonhos(rows){
 }
 function defaultMeta(modelKey){
   const m = MODELS[modelKey];
-  return { crescimento: m.crescimentoDefault, valor: 0 };
+  return { prolabore: null, crescimento: m.crescimentoDefault, valor: 0 };
 }
-// Meta de lucro = total da Minha Vida Pessoal (pró-labore, já com reservas e
-// investimentos) + crescimento profissional. Calculada, nunca digitada.
+// Pró-labore sugerido = vida pessoal (contas + reservas + investimentos)
+// + o valor mensal dos sonhos (o que precisa SOBRAR além das contas).
+function prolaboreSugerido(state){
+  return sumVida(state) + sumSonhosMensal(state);
+}
+// Pró-labore: o que a pessoa decide tirar. Enquanto não digitar, usa a sugestão.
+function prolaboreAtual(state){
+  const p = state.meta && state.meta.prolabore;
+  return (p == null || p === '') ? prolaboreSugerido(state) : parseBR(p);
+}
+// Meta de lucro = pró-labore + crescimento profissional.
 function computeMeta(state){
-  return sumVida(state) + parseBR(state.meta && state.meta.crescimento);
+  return prolaboreAtual(state) + parseBR(state.meta && state.meta.crescimento);
 }
 function defaultHora(modelKey){
   if (modelKey === 'prestador') return {diasUteis:5, horasDia:8, semanasEfetivas:46, taxaOcupacao:.7};
@@ -1146,7 +1155,7 @@ function renderCategoryStep(panel, opts){
 function renderStepVida(panel){
   renderCategoryStep(panel, {
     eyebrow:'1º passo — Conhecer', title:'Minha Vida Pessoal',
-    desc:'Cada centavo que sai do seu bolso no mês — inclusive o que você guarda (reserva de emergência, poupança, investimentos). Esse total vira o seu pró-labore na Minha Meta. Não esqueça nada — lista incompleta destrói o cálculo lá na frente.',
+    desc:'Cada centavo que sai do seu bolso no mês — inclusive o que você guarda (reserva de emergência, poupança, investimentos). Esse total é a base do seu pró-labore na Minha Meta. Não esqueça nada — lista incompleta destrói o cálculo lá na frente.',
     cats: VIDA_CATS, stateKey:'vida', totalLabel:'Total vida pessoal (mensal)',
   });
 }
@@ -1250,7 +1259,7 @@ function renderStepSonhos(panel){
 
   body.appendChild(el('p', {class:'help'}, ['O custo corrigido aplica a taxa total ao ano sobre o custo de hoje, proporcional ao prazo: custo × (1 + taxa)^(meses ÷ 12). O valor mensal é o custo corrigido dividido pelo prazo.']));
   body.appendChild(el('div', {class:'callout'}, [
-    el('b',{},['Essa meta mensal dos sonhos']), ' não substitui a meta de lucro da etapa Minha Meta — ela é uma referência: o que você quer que sobre, de verdade, pra viver a vida que você sonha.',
+    el('b',{},['Esse valor mensal dos sonhos']), ' entra na sugestão do seu pró-labore, na etapa Minha Meta: é o que precisa sobrar, além das suas contas, pra viver a vida que você sonha.',
   ]));
   panel.appendChild(body);
   footNav(panel, {});
@@ -1263,31 +1272,60 @@ function renderStepSonhos(panel){
 function renderStepMeta(panel){
   const st = APP.state;
   panelHead(panel, '2º passo — Conhecer', 'Minha Meta',
-    'Quanto o seu negócio precisa te entregar todo mês, depois de pagar os custos dele, os impostos e os repasses — pra cobrir sua vida pessoal e seu crescimento.');
+    'Quanto o seu negócio precisa te entregar todo mês, depois de pagar os custos dele, os impostos e os repasses — pra pagar sua vida, realizar seus sonhos e crescer.');
   panel.querySelector('.panel-head').appendChild(legendRow());
   const body = el('div', {class:'panel-body'});
 
-  function refresh(){
-    st.meta.valor = computeMeta(st);
-    const x = document.getElementById('meta-principal'); if (x) x.value = fmtNum(st.meta.valor, 2);
-  }
+  const vida = sumVida(st);
+  const sonhos = sumSonhosMensal(st);
+  const sugerido = prolaboreSugerido(st);
 
-  const vidaTotal = sumVida(st);
-  const proRow = el('div', {class:'field-row'});
-  proRow.appendChild(el('label', {}, ['Pró-labore (seu salário)', el('div',{class:'help'},['Vem da tela Minha Vida Pessoal — inclui suas reservas e investimentos.'])]));
-  proRow.appendChild(numberInput({value: vidaTotal, kind:'brl', locked:true}));
-  body.appendChild(proRow);
-  if (!vidaTotal){
+  // Referências (automáticas)
+  const ref = el('div', {class:'cat-group'});
+  ref.appendChild(el('div', {class:'cat-title'}, ['De onde vem o seu pró-labore']));
+  const refRow = (label, help, val) => {
+    const r = el('div', {class:'field-row'});
+    r.appendChild(el('label', {}, [label, el('div',{class:'help'},[help])]));
+    r.appendChild(numberInput({value: val, kind:'brl', locked:true}));
+    ref.appendChild(r);
+  };
+  refRow('Custo da vida pessoal', 'Total da tela Minha Vida — suas contas, reservas e investimentos.', vida);
+  refRow('Seus sonhos (por mês)', 'Total mensal da tela Meus Sonhos, já corrigido.', sonhos);
+  const sugRow = el('div', {class:'field-total'});
+  sugRow.appendChild(el('label', {}, ['Pró-labore sugerido (vida + sonhos)']));
+  sugRow.appendChild(el('span', {class:'mono', style:'font-weight:700;'}, [fmtBRL(sugerido)]));
+  ref.appendChild(sugRow);
+  body.appendChild(ref);
+
+  if (!vida){
     body.appendChild(el('div', {class:'callout'}, [
-      el('b',{},['Sua vida pessoal ainda está zerada. ']), 'Preencha a etapa Minha Vida Pessoal — é ela que define o seu pró-labore.',
-      ' ', el('button', {class:'btn btn-secondary btn-sm', onclick:()=>goStep('vida')}, ['Ir para Minha Vida']),
+      el('b',{},['Sua vida pessoal ainda está zerada. ']), 'Preencha a Minha Vida Pessoal pra ter uma referência real de pró-labore. ',
+      el('button', {class:'btn btn-secondary btn-sm', onclick:()=>goStep('vida')}, ['Ir para Minha Vida']),
     ]));
   }
+
+  // O que a pessoa decide
+  const dec = el('div', {class:'cat-group'});
+  dec.appendChild(el('div', {class:'cat-title'}, ['O que você decide']));
+  const proRow = el('div', {class:'field-row'});
+  proRow.appendChild(el('label', {}, ['Pró-labore (seu salário)', el('div',{class:'help'},['Quanto você quer tirar do negócio por mês. Comece pela sugestão e ajuste.'])]));
+  const proField = numberInput({value: prolaboreAtual(st), kind:'brl', onInput:(n)=>{ st.meta.prolabore = n; refresh(); persist(); }});
+  proField.querySelector('input').id = 'meta-prolabore';
+  proRow.appendChild(proField);
+  dec.appendChild(proRow);
+  const aviso = el('div', {id:'meta-aviso', class:'callout', style:'display:none;'});
+  dec.appendChild(aviso);
+  dec.appendChild(el('button', {class:'btn btn-secondary btn-sm', style:'margin:4px 0 12px;', onclick:()=>{
+    st.meta.prolabore = null; persist();
+    document.getElementById('meta-prolabore').value = fmtNum(prolaboreSugerido(st), 2);
+    refresh();
+  }}, ['Usar o valor sugerido']));
 
   const cresRow = el('div', {class:'field-row'});
   cresRow.appendChild(el('label', {}, ['Crescimento profissional', el('div',{class:'help'},['Cursos, congressos, mentorias — o que financia sua evolução no trabalho. Viagens e lazer já entram na Minha Vida.'])]));
   cresRow.appendChild(numberInput({value: st.meta.crescimento, kind:'brl', onInput:(n)=>{ st.meta.crescimento = n; refresh(); persist(); }}));
-  body.appendChild(cresRow);
+  dec.appendChild(cresRow);
+  body.appendChild(dec);
 
   const totalRow = el('div', {class:'field-total'});
   totalRow.appendChild(el('label', {style:'font-weight:800;font-size:15px;'}, ['💰 Meta de lucro mensal']));
@@ -1296,9 +1334,25 @@ function renderStepMeta(panel){
   metaField.querySelector('input').style.fontSize = '16px';
   totalRow.appendChild(metaField);
   body.appendChild(totalRow);
-  body.appendChild(el('p', {class:'help'}, ['Calculada automaticamente: pró-labore + crescimento profissional. Pra mudar a meta, ajuste a Minha Vida Pessoal ou o crescimento.']));
+  body.appendChild(el('p', {class:'help'}, ['Calculada automaticamente: pró-labore + crescimento profissional.']));
 
-  st.meta.valor = computeMeta(st);
+  function refresh(){
+    st.meta.valor = computeMeta(st);
+    const x = document.getElementById('meta-principal'); if (x) x.value = fmtNum(st.meta.valor, 2);
+    const p = prolaboreAtual(st);
+    const a = document.getElementById('meta-aviso');
+    if (!a) return;
+    if (vida && p < vida){
+      a.style.display = '';
+      a.innerHTML = '<b>Atenção:</b> esse pró-labore não paga nem a sua vida pessoal (' + fmtBRL(vida) + '). Faltam ' + fmtBRL(vida - p) + ' por mês.';
+    } else if (sonhos && p < sugerido){
+      a.style.display = '';
+      a.innerHTML = '<b>Suas contas estão cobertas</b>, mas sobram ' + fmtBRL(p - vida) + ' pros sonhos — eles pedem ' + fmtBRL(sonhos) + ' por mês. Ou aumenta o pró-labore, ou alonga o prazo dos sonhos.';
+    } else {
+      a.style.display = 'none';
+    }
+  }
+  refresh();
   panel.appendChild(body);
   footNav(panel, {});
 }
