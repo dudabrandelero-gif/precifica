@@ -60,6 +60,9 @@ function parseBR(str){
     s = s.replace(/\./g,'').replace(',', '.');
   } else if (hasComma){
     s = s.replace(',', '.');
+  } else if (/^-?\d{1,3}(\.\d{3})+$/.test(s)){
+    // "15.000" / "1.250.000": ponto como separador de milhar (padrão brasileiro)
+    s = s.replace(/\./g,'');
   }
   const n = parseFloat(s);
   return isNaN(n) ? 0 : n;
@@ -106,12 +109,7 @@ const MODELS = {
     desc:'Consultas, sessões, procedimentos — o seu tempo de atendimento é o produto.',
     examples:'dentista · psicólogo · fisioterapeuta · advogado · personal trainer',
     metaDefault:20000,
-    metaComponents:[
-      {label:'Pró-labore (seu salário)', help:'O que você tira pra viver o mês', def:10000},
-      {label:'Reserva de emergência', help:'Caixa pra imprevistos pessoais', def:3000},
-      {label:'Investimentos', help:'Previdência, renda variável, poupança', def:4000},
-      {label:'Crescimento (cursos, congressos, viagens)', help:'O que financia sua evolução profissional', def:3000},
-    ],
+    crescimentoDefault:3000,
     negocioTitle:'Vida do consultório / empresa',
     negocioDesc:'Custos fixos: tudo que sua operação gasta por mês mesmo se você não atender ninguém.',
     negocioTotalLabel:'Total custo fixo mensal da operação',
@@ -145,12 +143,7 @@ const MODELS = {
     desc:'Roupas, comidas, artesanato, cosméticos — tem matéria-prima, produção e frete.',
     examples:'costura · confeitaria · marcenaria · cosméticos · papelaria',
     metaDefault:15000,
-    metaComponents:[
-      {label:'Pró-labore (seu salário)', help:'O que você tira pra viver o mês', def:8000},
-      {label:'Reserva de emergência', help:'Caixa pra imprevistos pessoais', def:2000},
-      {label:'Investimentos', help:'Previdência, renda variável, poupança', def:3000},
-      {label:'Crescimento (cursos, viagens, lazer)', help:'O que financia sua evolução', def:2000},
-    ],
+    crescimentoDefault:2000,
     negocioTitle:'Vida da empresa (custos fixos da operação)',
     negocioDesc:'Tudo que sua empresa gasta por mês mesmo se não vender nada. Inclui estrutura, equipe, marketing.',
     negocioTotalLabel:'Total custo fixo mensal da empresa',
@@ -181,12 +174,7 @@ const MODELS = {
     desc:'Infoproduto, mentoria em grupo ou individual, consultoria — o que escala é o formato.',
     examples:'mentor · coach · consultor · criador de curso online',
     metaDefault:25000,
-    metaComponents:[
-      {label:'Pró-labore (seu salário)', help:'O que você tira pra viver o mês', def:12000},
-      {label:'Reserva de emergência', help:'Caixa pra imprevistos pessoais', def:3000},
-      {label:'Investimentos', help:'Previdência, renda variável, poupança', def:5000},
-      {label:'Crescimento (cursos, congressos, viagens)', help:'O que financia sua evolução', def:5000},
-    ],
+    crescimentoDefault:5000,
     negocioTitle:'Custos fixos do negócio',
     negocioDesc:'Plataformas, equipe, tráfego, estrutura. Tudo que paga mesmo sem vender nada.',
     negocioTotalLabel:'Total custo fixo mensal do negócio',
@@ -280,10 +268,12 @@ function normalizeSonhos(rows){
 }
 function defaultMeta(modelKey){
   const m = MODELS[modelKey];
-  return {
-    valor: m.metaDefault,
-    comp: m.metaComponents.map(c => c.def),
-  };
+  return { crescimento: m.crescimentoDefault, valor: 0 };
+}
+// Meta de lucro = total da Minha Vida Pessoal (pró-labore, já com reservas e
+// investimentos) + crescimento profissional. Calculada, nunca digitada.
+function computeMeta(state){
+  return sumVida(state) + parseBR(state.meta && state.meta.crescimento);
 }
 function defaultHora(modelKey){
   if (modelKey === 'prestador') return {diasUteis:5, horasDia:8, semanasEfetivas:46, taxaOcupacao:.7};
@@ -328,7 +318,14 @@ function mergeWithDefaults(modelKey, parsed){
   if (!merged.calcular || !merged.calcular.length) merged.calcular = def.calcular;
   if (!merged.insumos) merged.insumos = def.insumos;
   merged.hora = Object.assign({}, def.hora, merged.hora);
-  merged.meta = Object.assign({}, def.meta, merged.meta);
+  const savedMeta = parsed.meta || {};
+  merged.meta = Object.assign({}, def.meta, savedMeta);
+  // Versão antiga guardava 4 componentes; o 4º era o crescimento.
+  if (savedMeta.crescimento == null && Array.isArray(savedMeta.comp) && savedMeta.comp.length >= 4){
+    merged.meta.crescimento = parseBR(savedMeta.comp[3]);
+  }
+  delete merged.meta.comp;
+  merged.meta.valor = computeMeta(merged);
   return merged;
 }
 
@@ -504,7 +501,7 @@ function computeCalcConhecimento(rows, horaC){
 function computeResumo(modelKey, state){
   const horaC = computeHora(modelKey, state);
   const calc = computeCalcAll(modelKey, state.calcular, horaC);
-  const meta = parseBR(state.meta.valor);
+  const meta = computeMeta(state);
   const custoVida = sumVida(state);
   const metaSonhos = sumSonhosMensal(state);
 
@@ -1149,7 +1146,7 @@ function renderCategoryStep(panel, opts){
 function renderStepVida(panel){
   renderCategoryStep(panel, {
     eyebrow:'1º passo — Conhecer', title:'Minha Vida Pessoal',
-    desc:'Cada centavo que sai do seu bolso no mês. Não esqueça nada — lista incompleta destrói o cálculo lá na frente.',
+    desc:'Cada centavo que sai do seu bolso no mês — inclusive o que você guarda (reserva de emergência, poupança, investimentos). Esse total vira o seu pró-labore na Minha Meta. Não esqueça nada — lista incompleta destrói o cálculo lá na frente.',
     cats: VIDA_CATS, stateKey:'vida', totalLabel:'Total vida pessoal (mensal)',
   });
 }
@@ -1264,48 +1261,44 @@ function renderStepSonhos(panel){
 /* ---------------------------------------------------------------------- */
 
 function renderStepMeta(panel){
-  const m = MODELS[APP.model];
+  const st = APP.state;
   panelHead(panel, '2º passo — Conhecer', 'Minha Meta',
-    'Quanto precisa sobrar pra VOCÊ todo mês, depois de pagar tudo — sua vida pessoal, o negócio, os impostos e os repasses.');
+    'Quanto o seu negócio precisa te entregar todo mês, depois de pagar os custos dele, os impostos e os repasses — pra cobrir sua vida pessoal e seu crescimento.');
   panel.querySelector('.panel-head').appendChild(legendRow());
   const body = el('div', {class:'panel-body'});
 
-  const mainRow = el('div', {class:'field-row', style:'grid-template-columns:1fr 220px;margin-bottom:8px;'});
-  mainRow.appendChild(el('label', {style:'font-weight:800;font-size:15px;'}, ['💰 Meta de lucro mensal']));
-  const mainInput = numberInput({
-    value: APP.state.meta.valor, kind:'brl',
-    onInput:(n)=>{ APP.state.meta.valor = n; persist(); },
-  });
-  mainInput.querySelector('input').style.fontSize = '16px';
-  mainInput.querySelector('input').id = 'meta-principal';
-  mainRow.appendChild(mainInput);
-  body.appendChild(mainRow);
-  body.appendChild(el('p', {class:'help'}, ['É o que precisa sobrar TODO MÊS depois de pagar sua vida pessoal, o negócio, os impostos e os repasses.']));
-
-  body.appendChild(el('div', {class:'cat-title'}, ['Se quiser, detalhe sua meta']));
-  const comp = APP.state.meta.comp;
-  function updateSoma(){
-    const soma = comp.reduce((s,v)=>s+parseBR(v),0);
-    const elx = document.getElementById('meta-soma'); if (elx) elx.textContent = fmtBRL(soma);
+  function refresh(){
+    st.meta.valor = computeMeta(st);
+    const x = document.getElementById('meta-principal'); if (x) x.value = fmtNum(st.meta.valor, 2);
   }
-  m.metaComponents.forEach((c, i) => {
-    const row = el('div', {class:'field-row'});
-    row.appendChild(el('label', {}, [c.label, el('div',{class:'help'},[c.help])]));
-    row.appendChild(numberInput({value: comp[i]||0, kind:'brl', onInput:(n)=>{ comp[i]=n; persist(); updateSoma(); }}));
-    body.appendChild(row);
-  });
-  const somaRow = el('div', {class:'field-total'});
-  somaRow.appendChild(el('label', {}, ['Soma dos componentes']));
-  somaRow.appendChild(el('span', {id:'meta-soma', class:'mono', style:'font-weight:700;'}, [fmtBRL(comp.reduce((s,v)=>s+parseBR(v),0))]));
-  body.appendChild(somaRow);
 
-  const useBtn = el('button', {class:'btn btn-secondary btn-sm', style:'margin-top:12px;', onclick: () => {
-    const soma = comp.reduce((s,v)=>s+parseBR(v),0);
-    APP.state.meta.valor = soma; persist();
-    document.getElementById('meta-principal').value = fmtNum(soma,2);
-  }}, ['Usar essa soma como minha meta ↑']);
-  body.appendChild(useBtn);
+  const vidaTotal = sumVida(st);
+  const proRow = el('div', {class:'field-row'});
+  proRow.appendChild(el('label', {}, ['Pró-labore (seu salário)', el('div',{class:'help'},['Vem da tela Minha Vida Pessoal — inclui suas reservas e investimentos.'])]));
+  proRow.appendChild(numberInput({value: vidaTotal, kind:'brl', locked:true}));
+  body.appendChild(proRow);
+  if (!vidaTotal){
+    body.appendChild(el('div', {class:'callout'}, [
+      el('b',{},['Sua vida pessoal ainda está zerada. ']), 'Preencha a etapa Minha Vida Pessoal — é ela que define o seu pró-labore.',
+      ' ', el('button', {class:'btn btn-secondary btn-sm', onclick:()=>goStep('vida')}, ['Ir para Minha Vida']),
+    ]));
+  }
 
+  const cresRow = el('div', {class:'field-row'});
+  cresRow.appendChild(el('label', {}, ['Crescimento profissional', el('div',{class:'help'},['Cursos, congressos, mentorias — o que financia sua evolução no trabalho. Viagens e lazer já entram na Minha Vida.'])]));
+  cresRow.appendChild(numberInput({value: st.meta.crescimento, kind:'brl', onInput:(n)=>{ st.meta.crescimento = n; refresh(); persist(); }}));
+  body.appendChild(cresRow);
+
+  const totalRow = el('div', {class:'field-total'});
+  totalRow.appendChild(el('label', {style:'font-weight:800;font-size:15px;'}, ['💰 Meta de lucro mensal']));
+  const metaField = numberInput({value: computeMeta(st), kind:'brl', locked:true, result:true});
+  metaField.querySelector('input').id = 'meta-principal';
+  metaField.querySelector('input').style.fontSize = '16px';
+  totalRow.appendChild(metaField);
+  body.appendChild(totalRow);
+  body.appendChild(el('p', {class:'help'}, ['Calculada automaticamente: pró-labore + crescimento profissional. Pra mudar a meta, ajuste a Minha Vida Pessoal ou o crescimento.']));
+
+  st.meta.valor = computeMeta(st);
   panel.appendChild(body);
   footNav(panel, {});
 }
