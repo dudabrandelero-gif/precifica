@@ -8,14 +8,12 @@ rules_version = '2';
 // "Publicar".
 //
 // O que essas regras garantem:
-// - Cada aluno só lê e escreve os PRÓPRIOS dados detalhados
-//   (users/{uid} e users/{uid}/modelos/*).
-// - O resumo (resumos/{uid} — meta, receita, líquido, bateu a meta) pode ser
-//   lido também por quem tem o papel "mentor" — é o que alimenta o painel do
-//   mentor. Ninguém além do próprio aluno e de mentores enxerga isso.
-// - Só os e-mails listados em ALLOWED_MENTOR_EMAILS podem virar "mentor" no
-//   cadastro. Ajuste a lista abaixo (e a mesma lista em firebase-config.js)
-//   se mais pessoas da sua equipe precisarem ver o painel.
+// - Cada usuário só lê e escreve os PRÓPRIOS dados
+//   (users/{uid}, users/{uid}/modelos/* e resumos/{uid}).
+// - Não existe mais um papel "mentor" com acesso aos dados de outras contas —
+//   por enquanto, o Precifica é só a calculadora, sem o painel de acompanhar
+//   turma. Se essa funcionalidade voltar, é aqui que a permissão de leitura
+//   extra seria adicionada de novo.
 // ============================================================================
 
 service cloud.firestore {
@@ -27,25 +25,11 @@ service cloud.firestore {
     function isOwner(uid) {
       return isSignedIn() && request.auth.uid == uid;
     }
-    function isAllowedMentorEmail() {
-      // <<< ajuste esta lista para bater com MENTOR_EMAILS em firebase-config.js
-      return isSignedIn() && request.auth.token.email in [
-        'ubiratan@archettiodonto.com.br'
-      ];
-    }
-    function isMentor() {
-      return isSignedIn()
-        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'mentor';
-    }
 
     match /users/{uid} {
       allow read: if isOwner(uid);
-      allow create: if isOwner(uid)
-        && request.resource.data.role in ['aluno', 'mentor']
-        && (request.resource.data.role == 'aluno' || isAllowedMentorEmail());
-      allow update: if isOwner(uid)
-        && request.resource.data.role == resource.data.role; // papel não muda depois de criado
+      allow create: if isOwner(uid);
+      allow update: if isOwner(uid);
       allow delete: if false;
 
       match /modelos/{modelKey} {
@@ -54,8 +38,7 @@ service cloud.firestore {
     }
 
     match /resumos/{uid} {
-      allow read: if isOwner(uid) || isMentor();
-      allow write: if isOwner(uid);
+      allow read, write: if isOwner(uid);
     }
   }
 }

@@ -11,7 +11,7 @@ import {
   getFirestore, doc, getDoc, setDoc, updateDoc, serverTimestamp,
   collection, getDocs, query, orderBy, limit,
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
-import { firebaseConfig, MENTOR_EMAILS } from "./firebase-config.js";
+import { firebaseConfig } from "./firebase-config.js";
 
 const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
@@ -246,7 +246,7 @@ const CALC_EXAMPLES = {
 
 const SONHO_TIPOS = [
   {key:'', label:'Selecione…'},
-  {key:'moradia', label:'Moradia'},
+  {key:'moradia', label:'Moradia (casa própria)'},
   {key:'automovel', label:'Automóvel'},
   {key:'viagem', label:'Viagem'},
   {key:'outro', label:'Outro (escreva)'},
@@ -256,13 +256,38 @@ const SONHO_TIPOS = [
 const SONHOS_IGPM_PADRAO = 0.04;
 const SONHOS_JUROS_ANUAL = 0.10;
 
+// "Moradia" tem matemática própria: em vez da correção genérica acima, a casa
+// própria normalmente é FINANCIADA — então calculamos a parcela mensal de
+// verdade (Tabela Price), com faixas de taxa de juros de referência pesquisadas
+// no mercado (Caixa / Minha Casa Minha Vida, out/2026). São taxas de
+// REFERÊNCIA — a taxa real depende de renda, região, relacionamento bancário
+// e análise de crédito; o aluno deve confirmar o valor exato com o banco.
+const MORADIA_TAXAS = [
+  {key:'mcmv1', label:'Minha Casa Minha Vida — Faixa 1 (renda familiar até R$ 3.200)', taxa:0.0463},
+  {key:'mcmv2', label:'Minha Casa Minha Vida — Faixa 2 (renda familiar até R$ 5.000)', taxa:0.0588},
+  {key:'mcmv3', label:'Minha Casa Minha Vida — Faixa 3 (renda familiar até R$ 9.600)', taxa:0.0791},
+  {key:'mcmv4', label:'Minha Casa Minha Vida — Faixa 4 / Classe Média (renda familiar até R$ 13.000)', taxa:0.10},
+  {key:'sbpe', label:'Financiamento bancário comum (SBPE, fora do programa)', taxa:0.115},
+  {key:'personalizado', label:'Taxa personalizada (digite ao lado)', taxa:null},
+];
+const MORADIA_TAXA_PADRAO = 'mcmv3';
+function moradiaTaxaInfo(key){ return MORADIA_TAXAS.find(t => t.key===key) || MORADIA_TAXAS.find(t=>t.key===MORADIA_TAXA_PADRAO); }
+
 function defaultSonhos(){
-  return [0,1,2,3,4,5].map(() => ({tipo:'', desc:'', custo:0, prazo:0}));
+  return [0,1,2,3,4,5].map(() => ({
+    tipo:'', desc:'', custo:0, prazo:0,
+    entrada:0.20, taxaPreset:MORADIA_TAXA_PADRAO, taxaCustom:0.08, subsidio:0,
+  }));
 }
 function normalizeSonhos(rows){
   // Sonhos salvos antes da lista de opções: o texto livre vira "Outro".
   (rows||[]).forEach(r => {
     if (r.tipo == null) r.tipo = (r.desc && String(r.desc).trim()) ? 'outro' : '';
+    // Sonhos salvos antes dos campos de financiamento de moradia — preenche com o padrão.
+    if (r.entrada == null) r.entrada = 0.20;
+    if (r.taxaPreset == null) r.taxaPreset = MORADIA_TAXA_PADRAO;
+    if (r.taxaCustom == null) r.taxaCustom = 0.08;
+    if (r.subsidio == null) r.subsidio = 0;
   });
   return rows;
 }
@@ -365,12 +390,51 @@ function sonhosTaxaAnual(state){
   const igpm = parseBR(((state.sonhosTaxas)||{}).igpm != null ? state.sonhosTaxas.igpm : SONHOS_IGPM_PADRAO);
   return (1 + igpm) * (1 + SONHOS_JUROS_ANUAL) - 1;
 }
+// --- Moradia: financiamento real (Tabela Price), em vez da correção genérica ---
+function moradiaTaxaAnual(r){
+  if (r.taxaPreset === 'personalizado') return parseBR(r.taxaCustom)||0;
+  return moradiaTaxaInfo(r.taxaPreset).taxa;
+}
+function moradiaEntradaValor(r){
+  return parseBR(r.custo) * (parseBR(r.entrada)||0);
+}
+function moradiaFinanciado(r){
+  const v = parseBR(r.custo) - moradiaEntradaValor(r) - (parseBR(r.subsidio)||0);
+  return v > 0 ? v : 0;
+}
+// Parcela mensal pela Tabela Price: PMT = PV · i / (1 − (1+i)^−n), com i = taxa mensal equivalente.
+function moradiaParcela(r){
+  const n = parseBR(r.prazo);
+  if (!n) return 0;
+  const pv = moradiaFinanciado(r);
+  if (!pv) return 0;
+  const i = Math.pow(1 + moradiaTaxaAnual(r), 1/12) - 1;
+  if (!i) return pv / n;
+  return pv * i / (1 - Math.pow(1+i, -n));
+}
+// "Custo corrigido" de uma moradia = tudo que realmente sai do bolso: entrada + soma das parcelas.
+function moradiaTotalPago(r){
+  return moradiaEntradaValor(r) + moradiaParcela(r) * parseBR(r.prazo);
+}
+function moradiaResumoTexto(r){
+  const info = moradiaTaxaInfo(r.taxaPreset);
+  const nomeTaxa = r.taxaPreset === 'personalizado' ? 'taxa personalizada' : (info.label.split(' (')[0]||info.label);
+  const partes = [
+    'Entrada ' + fmtNum((parseBR(r.entrada)||0)*100,0) + '%',
+    nomeTaxa + ' (' + fmtNum(moradiaTaxaAnual(r)*100,2) + '% a.a.)',
+  ];
+  if (parseBR(r.subsidio) > 0) partes.push('Subsídio ' + fmtBRL(parseBR(r.subsidio)));
+  return partes.join(' • ');
+}
+
 function sonhoCustoCorrigido(state, r){
+  if (r.tipo === 'moradia') return moradiaTotalPago(r);
   const custo = parseBR(r.custo), prazo = parseBR(r.prazo);
   if (!custo || !prazo) return custo || 0;
   return custo * Math.pow(1 + sonhosTaxaAnual(state), prazo/12);
 }
 function sonhoMensal(state, r){
+  if (r.tipo === 'moradia') return moradiaParcela(r);
   return safeDiv(sonhoCustoCorrigido(state, r), parseBR(r.prazo));
 }
 function sumSonhosMensal(state){
@@ -568,20 +632,18 @@ function computeResumo(modelKey, state){
   }
 }
 /* ---------------------------------------------------------------------- */
-/* Estado da aplicação + roteamento (login / cadastro / menu / wizard /    */
-/* painel do mentor)                                                       */
+/* Estado da aplicação + roteamento (login / cadastro / menu / wizard)     */
 /* ---------------------------------------------------------------------- */
 
 const APP = {
-  view: 'loading', // loading | login | signup | menu | wizard | mentor
+  view: 'loading', // loading | login | signup | menu | wizard
   model: null,
   step: 'sonhos',
   state: null,
   authMsg: '',
   menuResumo: null, // resumos/{uid} cache pra tela de menu
-  mentorRows: null,
 };
-let CURRENT_USER = null; // {uid, email, nome, role}
+let CURRENT_USER = null; // {uid, email, nome}
 
 /* ---------- Firestore: load/save do modelo ativo ---------- */
 
@@ -641,11 +703,10 @@ function initAuthListener(){
       return;
     }
     // Evita uma corrida: logo após o cadastro, o próprio formulário de
-    // cadastro já monta o CURRENT_USER (com o "role" certinho) e chama
-    // render() antes que este listener dispare de novo pra mesma conta.
-    // Sem essa guarda, este trecho releria o perfil no Firestore — que
-    // às vezes ainda não terminou de ser gravado — e um mentor recém-
-    // cadastrado podia aparecer como "aluno" até deslogar e entrar de novo.
+    // cadastro já monta o CURRENT_USER e chama render() antes que este
+    // listener dispare de novo pra mesma conta. Sem essa guarda, este trecho
+    // releria o perfil no Firestore — que às vezes ainda não terminou de ser
+    // gravado — e sobrescreveria um CURRENT_USER que já estava correto.
     if (CURRENT_USER && CURRENT_USER.uid === fbUser.uid) return;
     try{
       const ref = FS.doc(dbfs, 'users', fbUser.uid);
@@ -655,11 +716,10 @@ function initAuthListener(){
         uid: fbUser.uid,
         email: fbUser.email || data.email || '',
         nome: data.nome || fbUser.displayName || (fbUser.email||'').split('@')[0],
-        role: data.role || 'aluno',
       };
     }catch(e){
       console.warn('perfil load failed', e);
-      CURRENT_USER = { uid: fbUser.uid, email: fbUser.email||'', nome: fbUser.displayName||'', role:'aluno' };
+      CURRENT_USER = { uid: fbUser.uid, email: fbUser.email||'', nome: fbUser.displayName||'' };
     }
     APP.view = 'menu';
     APP.menuResumo = null;
@@ -704,23 +764,6 @@ function goHome(){
   render();
   loadMenuResumo();
 }
-function goMentor(){
-  APP.view = 'mentor';
-  APP.mentorRows = null;
-  render();
-  loadMentorRows();
-}
-async function loadMentorRows(){
-  try{
-    const col = FS.collection(dbfs, 'resumos');
-    const snap = await FS.getDocs(FS.query(col, FS.orderBy('nome')));
-    APP.mentorRows = snap.docs.map(d => Object.assign({_id:d.id}, d.data()));
-  }catch(e){
-    console.warn('mentor load failed', e);
-    APP.mentorRows = [];
-  }
-  if (APP.view === 'mentor') render();
-}
 function goStep(stepKey){
   APP.step = stepKey;
   render();
@@ -745,7 +788,6 @@ function render(){
   if (APP.view === 'login'){ root.appendChild(renderAuth('login')); return; }
   if (APP.view === 'signup'){ root.appendChild(renderAuth('signup')); return; }
   if (APP.view === 'menu'){ root.appendChild(renderTopbar()); root.appendChild(renderMenu()); return; }
-  if (APP.view === 'mentor'){ root.appendChild(renderTopbar()); root.appendChild(renderMentorPanel()); return; }
   if (APP.view === 'wizard'){
     root.appendChild(renderTopbar());
     if (!APP.state){ root.appendChild(renderLoading()); return; }
@@ -827,9 +869,8 @@ function renderAuth(mode){
       try{
         const cred = await createUserWithEmailAndPassword(auth, emailInp.value.trim(), senhaInp.value);
         await updateProfile(cred.user, {displayName: nomeInp.value.trim()});
-        const role = MENTOR_EMAILS.includes(emailInp.value.trim().toLowerCase()) ? 'mentor' : 'aluno';
         await FS.setDoc(FS.doc(dbfs, 'users', cred.user.uid), {
-          nome: nomeInp.value.trim(), email: emailInp.value.trim(), role, criadoEm: FS.serverTimestamp(),
+          nome: nomeInp.value.trim(), email: emailInp.value.trim(), criadoEm: FS.serverTimestamp(),
         });
         await FS.setDoc(FS.doc(dbfs, 'resumos', cred.user.uid), {
           nome: nomeInp.value.trim(), email: emailInp.value.trim(),
@@ -838,8 +879,8 @@ function renderAuth(mode){
         // Monta o usuário atual diretamente com os dados que acabamos de gravar,
         // em vez de esperar o listener de autenticação reler o Firestore — essa
         // releitura pode disparar antes da gravação acima terminar (ver nota em
-        // initAuthListener) e faria um mentor recém-cadastrado cair como aluno.
-        CURRENT_USER = { uid: cred.user.uid, email: emailInp.value.trim(), nome: nomeInp.value.trim(), role };
+        // initAuthListener).
+        CURRENT_USER = { uid: cred.user.uid, email: emailInp.value.trim(), nome: nomeInp.value.trim() };
         APP.view = 'menu';
         APP.menuResumo = null;
         render();
@@ -879,7 +920,7 @@ function renderTopbar(){
     bar.appendChild(el('button', {class:'btn-ghost', onclick: goHome}, ['☰ Menu principal']));
     bar.appendChild(el('button', {class:'btn-ghost', onclick: resetModelData}, ['Limpar dados']));
   }
-  if (APP.view === 'menu' || APP.view === 'mentor'){
+  if (APP.view === 'menu'){
     if (CURRENT_USER) bar.appendChild(el('span', {style:'font-size:13px;color:var(--ink-soft);'}, ['Olá, ', el('b',{style:'color:var(--ink);'},[CURRENT_USER.nome])]));
   }
   if (CURRENT_USER) bar.appendChild(el('button', {class:'btn-ghost', onclick: doLogout}, ['Sair']));
@@ -908,10 +949,6 @@ function renderMenu(){
 
   const userbar = el('div', {class:'menu-userbar'});
   userbar.appendChild(el('span', {class:'who'}, ['Conta: ', el('b',{},[CURRENT_USER.email])]));
-  if (CURRENT_USER.role === 'mentor'){
-    userbar.appendChild(el('span', {class:'role-badge'}, ['mentor']));
-    userbar.appendChild(el('button', {class:'btn btn-secondary btn-sm', onclick: goMentor}, ['📊 Painel do mentor (ver turma)']));
-  }
   wrap.appendChild(userbar);
 
   const grid = el('div', {class:'model-grid'});
@@ -941,60 +978,8 @@ function renderMenu(){
   wrap.appendChild(el('ul', {class:'note-list', style:'margin-top:34px;max-width:560px;'}, [
     el('li', {}, ['Seus dados ficam salvos na sua conta — dá pra continuar de qualquer computador ou celular.']),
     el('li', {}, ['Pode preencher mais de um modelo — cada um guarda os dados separadamente.']),
-    el('li', {}, ['Só você (e, pros números-resumo, seu mentor) tem acesso ao que você preenche.']),
+    el('li', {}, ['Só você tem acesso ao que preenche.']),
   ]));
-  return wrap;
-}
-
-/* ---------------------------------------------------------------------- */
-/* Painel do mentor                                                       */
-/* ---------------------------------------------------------------------- */
-
-function bateBadge(v){
-  if (v === true) return el('span', {class:'bate-pill bate-yes'}, ['✅ bate']);
-  if (v === false) return el('span', {class:'bate-pill bate-no'}, ['❌ não bate']);
-  return el('span', {class:'bate-pill bate-none'}, ['—']);
-}
-
-function renderMentorPanel(){
-  const wrap = el('div', {class:'home'});
-  wrap.appendChild(el('div', {class:'home-hero'}, [
-    el('div', {class:'eyebrow'}, ['Painel do mentor']),
-    el('h1', {class:'disp'}, ['Acompanhamento da turma']),
-    el('p', {}, ['Sonhos, meta e se cada aluno já bate a própria meta de lucro — pra você acompanhar o progresso da mentoria e documentar casos de sucesso.']),
-  ]));
-  wrap.appendChild(el('button', {class:'btn btn-secondary btn-sm', style:'margin-bottom:20px;', onclick: goHome}, ['← Voltar ao menu']));
-
-  if (APP.mentorRows === null){
-    wrap.appendChild(renderLoading());
-    return wrap;
-  }
-  if (!APP.mentorRows.length){
-    wrap.appendChild(el('div', {class:'callout'}, ['Ainda nenhum aluno preencheu dados.']));
-    return wrap;
-  }
-
-  const tableWrap = el('div', {class:'mentor-table-wrap'});
-  const table = el('table', {class:'mentor-grid'});
-  const heads = ['Aluno', 'E-mail'];
-  Object.values(MODELS).forEach(m => heads.push(m.label + ' — meta', m.label + ' — líquido', m.label + ' — bate?'));
-  table.appendChild(el('thead', {}, [el('tr', {}, heads.map(h=>el('th',{},[h])))]));
-  const tbody = el('tbody');
-  APP.mentorRows.forEach(row => {
-    const tr = el('tr');
-    tr.appendChild(el('td', {style:'font-weight:700;'}, [row.nome || '(sem nome)']));
-    tr.appendChild(el('td', {style:'color:var(--ink-soft);'}, [row.email || '']));
-    Object.keys(MODELS).forEach(mk => {
-      const r = row[mk];
-      tr.appendChild(el('td', {class:'mono'}, [r ? fmtBRL(r.meta) : '—']));
-      tr.appendChild(el('td', {class:'mono'}, [r ? fmtBRL(r.liquido) : '—']));
-      tr.appendChild(el('td', {}, [bateBadge(r ? r.bateMeta : null)]));
-    });
-    tbody.appendChild(tr);
-  });
-  table.appendChild(tbody);
-  tableWrap.appendChild(table);
-  wrap.appendChild(tableWrap);
   return wrap;
 }
 
@@ -1229,15 +1214,33 @@ function renderStepSonhos(panel){
     SONHO_TIPOS.forEach(t => sel.appendChild(el('option', {value:t.key, selected: t.key===(r.tipo||'') ? 'selected' : null}, [t.label])));
     const descInput = el('input', {class:'inp text-left', value:r.desc||'', placeholder:'escreva seu sonho…', style:'margin-top:6px;'});
     descInput.style.display = r.tipo === 'outro' ? '' : 'none';
+    const moradiaBox = el('div', {style:'display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap;'});
+    const moradiaBtn = el('button', {class:'btn btn-secondary btn-sm', type:'button'}, ['🏠 Financiamento']);
+    const moradiaResumo = el('span', {class:'help', style:'margin:0;'}, [moradiaResumoTexto(r)]);
+    moradiaBtn.addEventListener('click', (ev) => {
+      openMoradiaPopover(moradiaBtn, r, () => {
+        persist(); updateRow(i); updateTotals();
+        moradiaResumo.textContent = moradiaResumoTexto(r);
+      });
+      ev.stopPropagation();
+    });
+    moradiaBox.appendChild(moradiaBtn);
+    moradiaBox.appendChild(moradiaResumo);
+    moradiaBox.style.display = r.tipo === 'moradia' ? '' : 'none';
     sel.addEventListener('change', () => {
       r.tipo = sel.value;
-      if (r.tipo === 'outro'){ descInput.style.display = ''; descInput.focus(); }
-      else { descInput.style.display = 'none'; r.desc = ''; descInput.value = ''; }
+      descInput.style.display = r.tipo === 'outro' ? '' : 'none';
+      if (r.tipo === 'outro'){ descInput.focus(); }
+      else { r.desc = ''; descInput.value = ''; }
+      moradiaBox.style.display = r.tipo === 'moradia' ? '' : 'none';
+      if (r.tipo === 'moradia') moradiaResumo.textContent = moradiaResumoTexto(r);
       persist();
+      updateRow(i); updateTotals();
     });
     descInput.addEventListener('input', () => { r.desc = descInput.value; persist(); });
     descTd.appendChild(sel);
     descTd.appendChild(descInput);
+    descTd.appendChild(moradiaBox);
     tr.appendChild(descTd);
     tr.appendChild(el('td', {}, [numberInput({value:r.custo, kind:'brl', onInput:(n)=>{ r.custo=n; persist(); updateRow(i); updateTotals(); }})]));
     tr.appendChild(el('td', {}, [numberInput({value:r.prazo, kind:'num', dec:0, onInput:(n)=>{ r.prazo=n; persist(); updateRow(i); updateTotals(); }})]));
@@ -1257,7 +1260,11 @@ function renderStepSonhos(panel){
   wrap.appendChild(table);
   body.appendChild(wrap);
 
-  body.appendChild(el('p', {class:'help'}, ['O custo corrigido aplica a taxa total ao ano sobre o custo de hoje, proporcional ao prazo: custo × (1 + taxa)^(meses ÷ 12). O valor mensal é o custo corrigido dividido pelo prazo.']));
+  body.appendChild(el('p', {class:'help'}, ['Para a maioria dos sonhos, o "custo corrigido" aplica a taxa total ao ano sobre o custo de hoje, proporcional ao prazo: custo × (1 + taxa)^(meses ÷ 12), e o valor mensal é o custo corrigido dividido pelo prazo.']));
+  body.appendChild(el('p', {class:'help'}, [
+    el('b',{},['Moradia é diferente: ']), 'casa própria normalmente é financiada, então aqui "Custo hoje" é o valor do imóvel, "Prazo" é o prazo do financiamento, "Custo corrigido" é tudo que sai do bolso (entrada + todas as parcelas) e "Valor mensal necessário" é a parcela mensal de verdade — calculada pela Tabela Price, no botão "🏠 Financiamento" da linha.',
+  ]));
+  body.appendChild(el('p', {class:'help'}, ['Taxas de financiamento de referência pesquisadas no mercado em out/2026 (Caixa / Minha Casa Minha Vida e SBPE) — a taxa real aprovada depende da sua renda, região, relacionamento bancário e análise de crédito; confirme sempre com o banco antes de decidir.']));
   body.appendChild(el('div', {class:'callout'}, [
     el('b',{},['Esse valor mensal dos sonhos']), ' entra na sugestão do seu pró-labore, na etapa Minha Meta: é o que precisa sobrar, além das suas contas, pra viver a vida que você sonha.',
   ]));
@@ -1597,6 +1604,73 @@ function openInsumoPopover(anchorEl, onApply){
   pop.style.left = Math.max(8, Math.min(window.innerWidth-popW-8, r.left-140)) + 'px';
   setTimeout(() => {
     const fn = (e) => { if (!pop.contains(e.target) && e.target!==anchorEl) closeInsumoPopover(); };
+    pop._outsideClick = fn;
+    document.addEventListener('click', fn);
+  }, 0);
+}
+
+/* ---------------------------------------------------------------------- */
+/* Popover: financiamento da Moradia (entrada, taxa, subsídio)             */
+/* ---------------------------------------------------------------------- */
+
+function closeMoradiaPopover(){
+  const p = document.getElementById('moradia-popover');
+  if (p){ if (p._outsideClick) document.removeEventListener('click', p._outsideClick); p.remove(); }
+}
+
+function openMoradiaPopover(anchorEl, r, onApply){
+  closeMoradiaPopover();
+  const pop = el('div', {class:'popover', id:'moradia-popover', style:'width:300px;'});
+  pop.appendChild(el('h4', {}, ['Financiamento da casa própria']));
+
+  const entradaRow = el('div', {class:'prow'});
+  entradaRow.appendChild(el('label', {}, [el('div',{},['Entrada']), el('div',{class:'help',style:'margin:0;'},['% do valor do imóvel'])]));
+  entradaRow.appendChild(numberInput({value:r.entrada, kind:'pct', onInput:(n)=>{ r.entrada=n; updatePreview(); }}));
+  pop.appendChild(entradaRow);
+
+  const taxaSel = el('select', {class:'inp', style:'margin-top:8px;width:100%;'});
+  MORADIA_TAXAS.forEach(t => taxaSel.appendChild(el('option', {value:t.key, selected: t.key===(r.taxaPreset||MORADIA_TAXA_PADRAO)?'selected':null}, [t.label + (t.taxa!=null ? ' — '+fmtNum(t.taxa*100,2)+'% a.a.' : '')])));
+  pop.appendChild(taxaSel);
+
+  const customRow = el('div', {class:'prow'});
+  customRow.appendChild(el('label', {}, [el('div',{},['Taxa personalizada']), el('div',{class:'help',style:'margin:0;'},['ao ano'])]));
+  const customInput = numberInput({value:r.taxaCustom, kind:'pct', onInput:(n)=>{ r.taxaCustom=n; updatePreview(); }});
+  customRow.appendChild(customInput);
+  customRow.style.display = r.taxaPreset === 'personalizado' ? '' : 'none';
+  pop.appendChild(customRow);
+
+  taxaSel.addEventListener('change', () => {
+    r.taxaPreset = taxaSel.value;
+    customRow.style.display = r.taxaPreset === 'personalizado' ? '' : 'none';
+    updatePreview();
+  });
+
+  const subsRow = el('div', {class:'prow'});
+  subsRow.appendChild(el('label', {}, [el('div',{},['Subsídio (R$)']), el('div',{class:'help',style:'margin:0;'},['se já souber o valor aprovado'])]));
+  subsRow.appendChild(numberInput({value:r.subsidio, kind:'brl', onInput:(n)=>{ r.subsidio=n; updatePreview(); }}));
+  pop.appendChild(subsRow);
+
+  const previewRow = el('div', {class:'ptotal'}, [el('span',{},['Parcela estimada']), el('span',{id:'moradia-pop-parcela'},[fmtBRL(moradiaParcela(r))])]);
+  pop.appendChild(previewRow);
+  const previewRow2 = el('div', {class:'ptotal'}, [el('span',{},['Total pago (entrada + parcelas)']), el('span',{id:'moradia-pop-total'},[fmtBRL(moradiaTotalPago(r))])]);
+  pop.appendChild(previewRow2);
+  function updatePreview(){
+    const p1 = document.getElementById('moradia-pop-parcela'); if (p1) p1.textContent = fmtBRL(moradiaParcela(r));
+    const p2 = document.getElementById('moradia-pop-total'); if (p2) p2.textContent = fmtBRL(moradiaTotalPago(r));
+  }
+
+  const btnRow = el('div', {style:'display:flex;gap:8px;margin-top:12px;'});
+  btnRow.appendChild(el('button', {class:'btn btn-secondary btn-sm', onclick: closeMoradiaPopover}, ['Cancelar']));
+  btnRow.appendChild(el('button', {class:'btn btn-primary btn-sm', onclick: () => { onApply(); closeMoradiaPopover(); }}, ['Usar esses valores']));
+  pop.appendChild(btnRow);
+
+  document.body.appendChild(pop);
+  const rect = anchorEl.getBoundingClientRect();
+  const popW = 300;
+  pop.style.top = Math.min(window.innerHeight-40, rect.bottom+6) + 'px';
+  pop.style.left = Math.max(8, Math.min(window.innerWidth-popW-8, rect.left-140)) + 'px';
+  setTimeout(() => {
+    const fn = (e) => { if (!pop.contains(e.target) && e.target!==anchorEl) closeMoradiaPopover(); };
     pop._outsideClick = fn;
     document.addEventListener('click', fn);
   }, 0);

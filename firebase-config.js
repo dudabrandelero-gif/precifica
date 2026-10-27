@@ -18,12 +18,3 @@ export const firebaseConfig = {
   messagingSenderId: "655418028873",
   appId: "1:655418028873:web:514f2d403dc651ce772098",
 };
-
-// E-mails autorizados a virar "mentor" (painel com a turma inteira) no
-// primeiro cadastro. Ajuste a lista abaixo — e ajuste TAMBÉM a mesma lista
-// dentro de firestore.rules (função isAllowedMentorEmail), porque é lá que a
-// permissão é realmente aplicada. Esta lista aqui só controla o que aparece
-// na tela de cadastro.
-export const MENTOR_EMAILS = [
-  "ubiratan@archettiodonto.com.br",
-];

@@ -6,7 +6,7 @@ Este pacote tem 5 arquivos:
 - `firebase-config.js` — aqui você cola as chaves do seu projeto Firebase.
 - `firestore.rules` — as regras de segurança (quem pode ler/escrever o quê).
 
-O Precifica usa o **Firebase** (do Google, tem plano gratuito de sobra pro seu caso) só para login e para guardar os dados de cada aluno. O site em si fica hospedado de graça no **GitHub Pages**. Nenhum dos dois pede cartão de crédito no plano gratuito (Spark, no caso do Firebase).
+O Precifica usa o **Firebase** (do Google, tem plano gratuito de sobra pro seu caso) só para login e para guardar os dados de cada pessoa. O site em si fica hospedado de graça no **GitHub Pages**. Nenhum dos dois pede cartão de crédito no plano gratuito (Spark, no caso do Firebase).
 
 Leva uns 15–20 minutos na primeira vez. Depois disso é só usar.
 
@@ -39,7 +39,7 @@ Leva uns 15–20 minutos na primeira vez. Depois disso é só usar.
 3. Abra o arquivo `firestore.rules` (deste pacote) num editor de texto, copie tudo e cole no lugar.
 4. Clique em **"Publicar"**.
 
-Essas regras garantem que cada aluno só vê os próprios dados detalhados, e que só o resumo (meta, se bateu ou não) fica visível para você, como mentor — nunca os gastos pessoais de ninguém.
+Essas regras garantem que cada pessoa só vê os próprios dados — ninguém mais tem acesso ao que foi preenchido.
 
 ### 1.4 Pegar as chaves do site (config)
 
@@ -50,12 +50,6 @@ Essas regras garantem que cada aluno só vê os próprios dados detalhados, e qu
 5. Abra `firebase-config.js` (deste pacote) e substitua os valores `"COLE_AQUI_..."` pelos valores reais que apareceram, mantendo as aspas. Salve o arquivo.
 
 Essas chaves não são segredo — é normal elas aparecerem no código do navegador. Quem protege os dados de verdade é o arquivo `firestore.rules` que você já publicou.
-
-### 1.5 Confirmar quem pode ser "mentor"
-
-Ainda em `firebase-config.js`, confira a lista `MENTOR_EMAILS` — ela já vem com `ubiratan@archettiodonto.com.br`. Quem se cadastrar com um desses e-mails vira automaticamente mentor (com acesso ao painel da turma); todo o resto vira aluno comum.
-
-Se quiser adicionar mais mentores no futuro, adicione o e-mail em **dois lugares**: nessa lista em `firebase-config.js` **e** na função `isAllowedMentorEmail()` dentro de `firestore.rules` (e publique as regras de novo) — o arquivo de regras é quem realmente garante a permissão; a lista em `firebase-config.js` só controla o que aparece na tela.
 
 ---
 
@@ -83,12 +77,12 @@ Pronto — o link `https://seu-usuario.github.io/precifica/` já funciona com ca
 
 ## Como usar no dia a dia
 
-- **Você (mentor):** cadastre-se no site com `ubiratan@archettiodonto.com.br` — você cai direto como mentor, com o botão "📊 Painel do mentor" no menu.
-- **Cada aluno da mentoria:** cadastra-se com o próprio e-mail, escolhe um dos 3 modelos e preenche. Os dados ficam salvos automaticamente (indicador "salvo na sua conta" no topo) e acessíveis de qualquer aparelho, durante todo o período da mentoria.
+- **Cada pessoa:** cadastra-se com o próprio e-mail, escolhe um dos 3 modelos e preenche. Os dados ficam salvos automaticamente (indicador "salvo na sua conta" no topo) e acessíveis de qualquer aparelho.
 - **Atualizar o site depois:** se algum dia eu (ou você) precisar mudar algo no código, é só enviar os arquivos atualizados para o mesmo repositório no GitHub (substituindo os antigos) — o GitHub Pages atualiza sozinho em menos de um minuto.
+
+Por enquanto o Precifica não tem um painel de acompanhamento de turma (um "mentor" vendo os números de vários alunos) — cada conta só vê os próprios dados. Se essa funcionalidade fizer falta de novo, dá pra adicionar de volta.
 
 ## Se algo der errado
 
 - **"Não deu certo (auth/...)" na tela de login:** geralmente é e-mail/senha errados, ou domínio não autorizado (veja o passo 2.1).
 - **Página em branco:** confira se `firebase-config.js` foi mesmo preenchido com as chaves reais (e não deixou nenhum `"COLE_AQUI_..."` esquecido) — abra o site, aperte F12 (ferramentas do desenvolvedor) → aba "Console" para ver a mensagem de erro exata.
-- **Painel do mentor sem ninguém listado:** só aparece depois que pelo menos um aluno logar e preencher alguma coisa.
