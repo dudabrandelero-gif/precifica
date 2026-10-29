@@ -34,7 +34,13 @@ function authErrorPt(err){
   };
   return map[code] || ('Não deu certo (' + (code || 'erro desconhecido') + '). Tente de novo.');
 }
-const VIDA_CATS = [{"name": "MORADIA", "items": ["Aluguel ou financiamento", "Condomínio", "IPTU (anual ÷ 12)", "Luz / energia", "Água", "Gás (botijão ou encanado)", "Internet", "TV a cabo / streaming (Netflix, Spotify etc)", "Empregada / diarista", "Jardineiro / piscineiro / manutenção", "Móveis, decoração, reformas (reserva mensal)"]}, {"name": "ALIMENTAÇÃO", "items": ["Supermercado", "Feira / hortifruti", "Açougue / peixaria", "Padaria / laticínios", "Restaurantes", "Delivery / fast food", "Cafés e lanches fora"]}, {"name": "TRANSPORTE", "items": ["Combustível", "Parcela do carro / financiamento", "Seguro do carro (anual ÷ 12)", "IPVA + licenciamento (anual ÷ 12)", "Manutenção do carro (revisão, pneus)", "Uber / 99 / táxi", "Transporte público", "Estacionamento"]}, {"name": "SAÚDE", "items": ["Plano de saúde", "Plano odontológico", "Academia / personal / crossfit", "Terapia / psicólogo", "Nutricionista", "Medicamentos de uso contínuo", "Exames e consultas", "Suplementos / vitaminas"]}, {"name": "FAMÍLIA", "items": ["Escola / faculdade dos filhos", "Atividades dos filhos (aulas extras)", "Pensão alimentícia", "Pets (ração, vet, banho)", "Presentes (aniversários, Natal)", "Apoio a familiares"]}, {"name": "PESSOAL", "items": ["Cabeleireiro / barbeiro", "Unha / estética", "Cosméticos e higiene", "Roupas e calçados", "Acessórios"]}, {"name": "LAZER", "items": ["Viagens (reserva mensal)", "Cinema, teatro, shows", "Hobbies (curso, material)", "Eventos e festas", "Assinaturas de lazer (clubes, revistas)"]}, {"name": "INVESTIMENTOS E RESERVAS", "items": ["Reserva de emergência", "Poupança", "Previdência privada", "Investimentos em renda variável", "Outros aportes"]}, {"name": "DÍVIDAS E FINANCIAMENTOS", "items": ["Cartão de crédito (rotativo)", "Empréstimo pessoal", "Financiamento imóvel (se não for moradia atual)", "Outras parcelas"]}, {"name": "OUTROS", "items": ["Doações / dízimo", "Assinaturas diversas (apps, jornais)", "Imprevistos / reserva 10%"]}];
+const VIDA_CATS = [{"name": "MORADIA", "items": ["Aluguel ou financiamento", "Condomínio", "IPTU (anual ÷ 12)", "Luz / energia", "Água", "Gás (botijão ou encanado)", "Internet", "TV a cabo / streaming (Netflix, Spotify etc)", "Empregada / diarista", "Jardineiro / piscineiro / manutenção", "Móveis, decoração, reformas (reserva mensal)"]}, {"name": "ALIMENTAÇÃO", "items": ["Supermercado", "Feira / hortifruti", "Açougue / peixaria", "Padaria / laticínios", "Restaurantes", "Delivery / fast food", "Cafés e lanches fora"]}, {"name": "TRANSPORTE", "items": ["Combustível", "Parcela do carro / financiamento", "Seguro do carro (anual ÷ 12)", "IPVA + licenciamento (anual ÷ 12)", "Manutenção do carro (revisão, pneus)", "Uber / 99 / táxi", "Transporte público", "Estacionamento"]}, {"name": "SAÚDE", "items": ["Plano de saúde", "Plano odontológico", "Academia / personal / crossfit", "Terapia / psicólogo", "Nutricionista", "Medicamentos de uso contínuo", "Exames e consultas", "Suplementos / vitaminas"]}, {"name": "FAMÍLIA", "items": ["Escola / faculdade dos filhos", "Babá / berçário / creche", "Fraldas e itens de bebê", "Material escolar e uniforme (anual ÷ 12)", "Roupas e calçados dos filhos", "Plano de saúde dos filhos", "Atividades dos filhos (aulas extras)", "Pensão alimentícia (que você paga)", "Pets (ração, vet, banho)", "Presentes (aniversários, Natal)", "Apoio a familiares"]}, {"name": "PESSOAL", "items": ["Cabeleireiro / barbeiro", "Unha / estética", "Cosméticos e higiene", "Roupas e calçados", "Acessórios"]}, {"name": "LAZER", "items": ["Viagens (reserva mensal)", "Cinema, teatro, shows", "Hobbies (curso, material)", "Eventos e festas", "Assinaturas de lazer (clubes, revistas)"]}, {"name": "INVESTIMENTOS E RESERVAS", "items": ["Reserva de emergência", "Poupança", "Previdência privada", "Investimentos em renda variável", "Outros aportes"]}, {"name": "DÍVIDAS E FINANCIAMENTOS", "items": ["Cartão de crédito (rotativo)", "Empréstimo pessoal", "Financiamento imóvel (se não for moradia atual)", "Outras parcelas"]}, {"name": "OUTROS", "items": ["Doações / dízimo", "Assinaturas diversas (apps, jornais)", "Imprevistos / reserva 10%"]}];
+// Lista da Minha Vida antes de 29/10/2026 (salvamentos antigos guardavam só os valores, na ordem desta lista).
+const VIDA_LABELS_V1 = ["Aluguel ou financiamento", "Condomínio", "IPTU (anual ÷ 12)", "Luz / energia", "Água", "Gás (botijão ou encanado)", "Internet", "TV a cabo / streaming (Netflix, Spotify etc)", "Empregada / diarista", "Jardineiro / piscineiro / manutenção", "Móveis, decoração, reformas (reserva mensal)", "Supermercado", "Feira / hortifruti", "Açougue / peixaria", "Padaria / laticínios", "Restaurantes", "Delivery / fast food", "Cafés e lanches fora", "Combustível", "Parcela do carro / financiamento", "Seguro do carro (anual ÷ 12)", "IPVA + licenciamento (anual ÷ 12)", "Manutenção do carro (revisão, pneus)", "Uber / 99 / táxi", "Transporte público", "Estacionamento", "Plano de saúde", "Plano odontológico", "Academia / personal / crossfit", "Terapia / psicólogo", "Nutricionista", "Medicamentos de uso contínuo", "Exames e consultas", "Suplementos / vitaminas", "Escola / faculdade dos filhos", "Atividades dos filhos (aulas extras)", "Pensão alimentícia", "Pets (ração, vet, banho)", "Presentes (aniversários, Natal)", "Apoio a familiares", "Cabeleireiro / barbeiro", "Unha / estética", "Cosméticos e higiene", "Roupas e calçados", "Acessórios", "Viagens (reserva mensal)", "Cinema, teatro, shows", "Hobbies (curso, material)", "Eventos e festas", "Assinaturas de lazer (clubes, revistas)", "Reserva de emergência", "Poupança", "Previdência privada", "Investimentos em renda variável", "Outros aportes", "Cartão de crédito (rotativo)", "Empréstimo pessoal", "Financiamento imóvel (se não for moradia atual)", "Outras parcelas", "Doações / dízimo", "Assinaturas diversas (apps, jornais)", "Imprevistos / reserva 10%"];
+// Itens renomeados: nome antigo → nome novo.
+const VIDA_ALIASES = {"Pensão alimentícia": "Pensão alimentícia (que você paga)"};
+// Itens que contam como gasto com filhos (pro "gasto médio por filho").
+const VIDA_ITENS_FILHOS = ["Escola / faculdade dos filhos","Babá / berçário / creche","Fraldas e itens de bebê","Material escolar e uniforme (anual ÷ 12)","Roupas e calçados dos filhos","Plano de saúde dos filhos","Atividades dos filhos (aulas extras)","Pensão alimentícia (que você paga)"];
 const NEGOCIO_CATS = {"prestador": [{"name": "ESPAÇO DE ATENDIMENTO", "items": ["Aluguel de sala / consultório / clínica", "Condomínio comercial", "IPTU comercial (anual ÷ 12)", "Luz / energia da sala", "Água", "Internet e telefone", "Limpeza (diarista, produtos)", "Manutenção predial e reformas", "Segurança (alarme, câmeras)", "Decoração e ambientação (amortização mensal)"]}, {"name": "EQUIPAMENTOS", "items": ["Depreciação de equipamentos (valor ÷ vida útil)", "Manutenção e calibração", "Seguro de equipamentos", "Licenças de software clínico/prontuário eletrônico", "Computador, impressora, câmera"]}, {"name": "EQUIPE", "items": ["Secretária / recepcionista (salário + encargos)", "Auxiliar técnico (enfermeiro, aux. odonto, estagiário)", "Limpeza terceirizada", "Contador", "Treinamentos e atualizações da equipe"]}, {"name": "INSUMOS E MATERIAIS FIXOS", "items": ["Material de escritório (papel, canetas, impressos)", "Água, café, lanche para pacientes", "Descartáveis gerais (papel toalha, álcool)", "EPIs da equipe", "Reposição de itens clínicos gerais"]}, {"name": "MARKETING E CAPTAÇÃO", "items": ["Gestão de redes sociais / social media", "Tráfego pago (Meta, Google)", "Site e hospedagem", "Cartões, panfletos, material gráfico", "Participação em congressos e eventos"]}, {"name": "ADMINISTRATIVO E LEGAL", "items": ["Anuidades de conselho (CRM, CRO, CRP, CAU, CRC)", "Seguros de responsabilidade profissional", "Alvarás e licenças (Vigilância Sanitária)", "Jurídico (mensal ou provisionado)", "Tarifas bancárias e taxas de pagamento mensais"]}, {"name": "RESERVA", "items": ["Caixa mínimo da operação", "Imprevistos (10%)"]}], "produto": [{"name": "ESTRUTURA FÍSICA", "items": ["Aluguel da fábrica / loja / escritório", "Condomínio comercial", "IPTU comercial (÷12)", "Luz / energia da operação", "Água / esgoto", "Gás industrial (se usar)", "Internet e telefone", "Limpeza (produtos, serviço terceirizado)", "Manutenção predial", "Segurança (alarme, câmeras, vigilância)"]}, {"name": "EQUIPAMENTOS E DEPRECIAÇÃO", "items": ["Manutenção de máquinas", "Depreciação de equipamentos (valor ÷ vida útil em meses)", "Aluguel de equipamentos (se alugar)", "Ferramentas de reposição"]}, {"name": "EQUIPE", "items": ["Salários (CLT) — base total", "Encargos e benefícios (≈70% do salário)", "Vale transporte / alimentação", "Plano de saúde da equipe", "Treinamentos e capacitações", "Freelancers e prestadores fixos"]}, {"name": "SOFTWARES E SISTEMAS", "items": ["ERP / sistema de gestão", "Sistema de estoque / PDV", "E-commerce (plataforma, hospedagem)", "Design e edição (Canva, Photoshop)", "Outras assinaturas (CRM, e-mail, IA)"]}, {"name": "MARKETING E VENDAS", "items": ["Tráfego pago (Meta, Google)", "Agência ou assessoria de marketing", "Produção de conteúdo / fotografia", "Influenciadores / parcerias", "Materiais promocionais e brindes", "Participação em feiras e eventos"]}, {"name": "ADMINISTRATIVO E FINANCEIRO", "items": ["Contador", "Jurídico (mensal ou provisionado)", "Tarifas bancárias", "Certificações e licenças", "Seguros da empresa"]}, {"name": "RESERVA", "items": ["Caixa mínimo da empresa (reserva mensal)", "Imprevistos operacionais (10%)"]}], "conhecimento": [{"name": "PLATAFORMAS E SOFTWARES", "items": ["Plataforma de cursos (Hotmart, Kiwify, Hubla) — assinatura fixa", "Plataforma de comunidade (Circle, Discord paid, Telegram VIP)", "Plataforma de lives (Zoom, StreamYard, Riverside)", "E-mail marketing (ActiveCampaign, RD, MailerLite)", "CRM (RD Station, Pipedrive, HubSpot)", "Página / Site / Landing pages (Wordpress, Webflow, Klicksend)", "Ferramentas de IA (ChatGPT Plus, Claude Pro, etc.)", "Design (Canva Pro, Adobe Creative, Figma)", "Automações (Zapier, Make)", "Armazenamento e backup (Drive, Dropbox)", "Outras assinaturas recorrentes"]}, {"name": "EQUIPE FIXA", "items": ["Assistente virtual / executiva", "Social media / gestão de conteúdo", "Editor de vídeo", "Designer", "Copywriter", "Tráfego pago (gestor)", "Atendimento / suporte ao aluno", "Contador", "Jurídico"]}, {"name": "MARKETING E CAPTAÇÃO", "items": ["Tráfego pago (Meta, Google, YouTube)", "Produção de conteúdo orgânico (editor, fotógrafo)", "Permutas e parcerias (custo real)", "Eventos, congressos, lives externas", "Materiais gráficos e de apoio"]}, {"name": "ESTRUTURA FÍSICA", "items": ["Aluguel de escritório / coworking (se houver)", "Internet e telefone dedicados", "Luz / água (proporcional)", "Equipamentos (depreciação mensal: câmera, microfone, notebook)", "Material de gravação (iluminação, fundo, acústica)"]}, {"name": "ADMINISTRATIVO", "items": ["Tarifas bancárias (conta PJ, Pix, boletos)", "Certificação digital", "Seguros", "Licenças e registros"]}, {"name": "RESERVA", "items": ["Caixa mínimo da empresa", "Imprevistos (10%)"]}]};
 /* =========================================================================
    PRECIFICA — motor de cálculo + estado
@@ -364,7 +370,8 @@ const RENDA_TIPOS = [
   {key:'negocio', label:'Outro negócio', help:'Lucro que você realmente retira desse outro negócio por mês.'},
   {key:'investimentos', label:'Investimentos (aplicações, ações, FIIs)', help:'Só o que você saca por mês (juros, dividendos, rendimentos). O que é reinvestido não conta.'},
   {key:'aluguel', label:'Aluguel recebido', help:'Valor líquido que sobra do aluguel (depois de taxas e impostos).'},
-  {key:'aposentadoria', label:'Aposentadoria / pensão', help:'Valor líquido mensal.'},
+  {key:'aposentadoria', label:'Aposentadoria (INSS / previdência)', help:'Valor líquido mensal.'},
+  {key:'pensaorecebida', label:'Pensão alimentícia recebida', help:'Valor mensal que você recebe de pensão (pros filhos ou pra você).'},
   {key:'outra', label:'Outra (escreva)', help:'Qualquer outra renda que entra todo mês.'},
 ];
 function rendaTipo(key){ return RENDA_TIPOS.find(t => t.key===key) || RENDA_TIPOS[RENDA_TIPOS.length-1]; }
@@ -403,6 +410,8 @@ function defaultState(modelKey){
     meta: defaultMeta(modelKey),
     rendas: defaultRendas(),
     vida: VIDA_FLAT.map(() => 0),
+    vidaLabels: VIDA_FLAT.map(it => it.label),
+    filhos: 0,
     negocio: negocioFlat(modelKey).map(() => 0),
     insumos: defaultInsumos(modelKey),
     hora: defaultHora(modelKey),
@@ -410,11 +419,27 @@ function defaultState(modelKey){
   };
 }
 
+// Reaproveita os valores da Minha Vida mesmo quando a lista de itens muda:
+// casa cada valor pelo NOME do item (não pela posição).
+function migrateVida(parsed, defVida){
+  const vals = parsed.vida;
+  if (!Array.isArray(vals)) return defVida;
+  const cur = VIDA_FLAT.map(it => it.label);
+  let labels = Array.isArray(parsed.vidaLabels) && parsed.vidaLabels.length === vals.length ? parsed.vidaLabels
+             : (vals.length === VIDA_LABELS_V1.length ? VIDA_LABELS_V1 : null);
+  if (!labels) return vals.length === cur.length ? vals : defVida;
+  const byLabel = {};
+  labels.forEach((l, i) => { byLabel[VIDA_ALIASES[l] || l] = vals[i]; });
+  return cur.map(l => byLabel[l] != null ? byLabel[l] : 0);
+}
+
 function mergeWithDefaults(modelKey, parsed){
   const def = defaultState(modelKey);
   if (!parsed) return def;
   const merged = Object.assign({}, def, parsed);
-  if (!merged.vida || merged.vida.length !== def.vida.length) merged.vida = def.vida;
+  merged.vida = migrateVida(parsed, def.vida);
+  merged.vidaLabels = VIDA_FLAT.map(it => it.label);
+  merged.filhos = parseBR(parsed.filhos) || 0;
   if (!merged.negocio || merged.negocio.length !== def.negocio.length) merged.negocio = def.negocio;
   if (!merged.sonhos) merged.sonhos = def.sonhos;
   normalizeSonhos(merged.sonhos);
@@ -1189,16 +1214,18 @@ function renderCategoryStep(panel, opts){
   opts.cats.forEach(cat => {
     const group = el('div', {class:'cat-group'});
     group.appendChild(el('div', {class:'cat-title'}, [cat.name]));
+    if (opts.onCatStart) opts.onCatStart(cat, group);
     cat.items.forEach(label => {
       const i = idx++;
       const row = el('div', {class:'field-row'});
       row.appendChild(el('label', {}, [label]));
       row.appendChild(numberInput({
         value: arr[i]||0, kind:'brl',
-        onInput: (n) => { arr[i] = n; persist(); updateTotal(); },
+        onInput: (n) => { arr[i] = n; persist(); updateTotal(); if (opts.onChange) opts.onChange(); },
       }));
       group.appendChild(row);
     });
+    if (opts.onCatEnd) opts.onCatEnd(cat, group);
     body.appendChild(group);
   });
 
@@ -1218,8 +1245,39 @@ function renderStepVida(panel){
     eyebrow:'1º passo — Conhecer', title:'Minha Vida Pessoal',
     desc:'Cada centavo que sai do seu bolso no mês — inclusive o que você guarda (reserva de emergência, poupança, investimentos). Esse total é a base do seu pró-labore na Minha Meta. Não esqueça nada — lista incompleta destrói o cálculo lá na frente.',
     cats: VIDA_CATS, stateKey:'vida', totalLabel:'Total vida pessoal (mensal)',
+    onCatStart: (cat, group) => {
+      if (cat.name !== 'FAMÍLIA') return;
+      const st = APP.state;
+      const row = el('div', {class:'field-row'});
+      row.appendChild(el('label', {style:'font-weight:700;'}, ['Número de filhos', el('div',{class:'help'},['Pra calcular quanto cada filho custa por mês. Coloque 0 se não tiver.'])]));
+      row.appendChild(numberInput({value: st.filhos||0, kind:'num', dec:0, min:0, onInput:(n)=>{ st.filhos = Math.round(n)||0; persist(); updateFilhos(); }}));
+      group.appendChild(row);
+    },
+    onCatEnd: (cat, group) => {
+      if (cat.name !== 'FAMÍLIA') return;
+      group.appendChild(el('div', {class:'field-total', id:'filhos-resumo'}, [
+        el('label', {id:'filhos-resumo-lbl'}, ['']),
+        el('span', {id:'filhos-resumo-val', class:'mono', style:'font-weight:700;'}, ['']),
+      ]));
+    },
+    onChange: () => updateFilhos(),
   });
+  requestAnimationFrame(updateFilhos);
 }
+function gastoFilhos(state){
+  return VIDA_FLAT.reduce((s,it,i) => s + (VIDA_ITENS_FILHOS.includes(it.label) ? (parseBR((state.vida||[])[i])||0) : 0), 0);
+}
+function updateFilhos(){
+  const st = APP.state; if (!st) return;
+  const box = document.getElementById('filhos-resumo'); if (!box) return;
+  const n = parseBR(st.filhos)||0, total = gastoFilhos(st);
+  box.style.display = (n > 0 || total > 0) ? '' : 'none';
+  document.getElementById('filhos-resumo-lbl').textContent = n > 0
+    ? 'Gasto com filhos: ' + fmtBRL(total) + ' por mês — média por filho (' + n + (n===1?' filho':' filhos') + ')'
+    : 'Gasto com filhos por mês (informe o número de filhos pra ver a média)';
+  document.getElementById('filhos-resumo-val').textContent = fmtBRL(n > 0 ? total / n : total);
+}
+
 function renderStepNegocio(panel){
   const m = MODELS[APP.model];
   renderCategoryStep(panel, {
