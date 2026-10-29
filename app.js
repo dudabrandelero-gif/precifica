@@ -394,6 +394,7 @@ function defaultInsumos(modelKey){
   const m = MODELS[modelKey];
   if (!m.hasInsumos) return [];
   return m.insumosDefaults.map((d,i) => ({
+    id: uid(),
     codigo: m.insumosCodePrefix + String(i+1).padStart(3,'0'),
     nome: d[0], unidade: d[1], qtd: d[2], valor: d[3],
   }));
@@ -404,7 +405,8 @@ function defaultCalc(modelKey){
 }
 
 function defaultState(modelKey){
-  return {
+  const calcular = defaultCalc(modelKey);
+  const st = {
     sonhos: defaultSonhos(),
     sonhosTaxas: {ipca: SONHOS_IPCA_PADRAO},
     meta: defaultMeta(modelKey),
@@ -415,8 +417,13 @@ function defaultState(modelKey){
     negocio: negocioFlat(modelKey).map(() => 0),
     insumos: defaultInsumos(modelKey),
     hora: defaultHora(modelKey),
-    calcular: defaultCalc(modelKey),
+    calcular,
   };
+  if (modelKey === 'prestador'){
+    st.calcGlobal = deriveCalcGlobal(calcular);
+    calcular.forEach(r => { r.matModo = 'valor'; r.materiais = []; });
+  }
+  return st;
 }
 
 // Reaproveita os valores da Minha Vida mesmo quando a lista de itens muda:
@@ -447,6 +454,12 @@ function mergeWithDefaults(modelKey, parsed){
   delete merged.sonhosTaxas.igpm; // versão antiga usava IGP-M + 10% de juros
   if (!merged.calcular || !merged.calcular.length) merged.calcular = def.calcular;
   if (!merged.insumos) merged.insumos = def.insumos;
+  (merged.insumos || []).forEach(ins => { if (!ins.id) ins.id = uid(); });
+  if (modelKey === 'prestador'){
+    if (!parsed.calcGlobal) merged.calcGlobal = deriveCalcGlobal(merged.calcular);
+    else merged.calcGlobal = Object.assign({}, CALC_GLOBAL_DEFAULT, parsed.calcGlobal);
+    (merged.calcular || []).forEach(r => { if (!r.matModo) r.matModo = 'valor'; if (!Array.isArray(r.materiais)) r.materiais = []; });
+  }
   merged.hora = Object.assign({}, def.hora, merged.hora);
   const savedMeta = parsed.meta || {};
   merged.meta = Object.assign({}, def.meta, savedMeta);
@@ -572,8 +585,38 @@ function computeHora(modelKey, state){
 /* Calcular — linha a linha, por modelo                                    */
 /* ---------------------------------------------------------------------- */
 
-function computeCalcAll(modelKey, rows, horaC){
-  if (modelKey === 'prestador') return computeCalcPrestador(rows, horaC);
+// Configurações que valem para todos os serviços (Prestador).
+const CALC_GLOBAL_DEFAULT = {impostos:.06, cartao:.03, comissao:0, margem:.4, convenio:false};
+function calcGlobal(state){ return Object.assign({}, CALC_GLOBAL_DEFAULT, (state && state.calcGlobal) || {}); }
+function insumoCustoUn(ins){ return safeDiv(parseBR(ins.valor), parseBR(ins.qtd)); }
+function materiaisCusto(state, row){
+  const map = {}; ((state && state.insumos) || []).forEach(ins => { map[ins.id] = ins; });
+  return (row.materiais || []).reduce((s, m) => s + (map[m.id] ? parseBR(m.qtd) * insumoCustoUn(map[m.id]) : 0), 0);
+}
+// Valores que realmente entram no cálculo de um serviço.
+function prestadorEfetivo(row, state){
+  if (!state) return row;
+  const g = calcGlobal(state);
+  const r = Object.assign({}, row);
+  if (r.usaPadrao !== false){ r.impostos = g.impostos; r.cartao = g.cartao; r.comissao = g.comissao; r.margem = g.margem; }
+  if (!g.convenio) r.repasse = 0;
+  if (r.matModo === 'lista') r.insumos = materiaisCusto(state, row);
+  return r;
+}
+// Gera as configurações gerais a partir de serviços já salvos (migração / exemplos).
+function deriveCalcGlobal(rows){
+  const g = Object.assign({}, CALC_GLOBAL_DEFAULT);
+  const first = (rows || [])[0];
+  if (first){ ['impostos','cartao','comissao','margem'].forEach(k => { if (first[k] != null) g[k] = parseBR(first[k]); }); }
+  g.convenio = (rows || []).some(r => parseBR(r.repasse) > 0);
+  (rows || []).forEach(r => {
+    if (r.usaPadrao == null) r.usaPadrao = ['impostos','cartao','comissao','margem'].every(k => Math.abs(parseBR(r[k]) - g[k]) < 1e-9);
+  });
+  return g;
+}
+
+function computeCalcAll(modelKey, rows, horaC, state){
+  if (modelKey === 'prestador') return computeCalcPrestador((rows||[]).map(r => prestadorEfetivo(r, state)), horaC);
   if (modelKey === 'produto') return computeCalcProduto(rows, horaC);
   if (modelKey === 'conhecimento') return computeCalcConhecimento(rows, horaC);
 }
@@ -672,7 +715,7 @@ function computeCalcConhecimento(rows, horaC){
 
 function computeResumo(modelKey, state){
   const horaC = computeHora(modelKey, state);
-  const calc = computeCalcAll(modelKey, state.calcular, horaC);
+  const calc = computeCalcAll(modelKey, state.calcular, horaC, state);
   const metaTotal = computeMeta(state);
   const outrasRendas = sumOutrasRendas(state);
   const meta = computeMetaNegocio(state); // o que ESTE negócio precisa entregar
@@ -687,6 +730,11 @@ function computeResumo(modelKey, state){
       horasDisponiveis: horaC.horasDisponiveis,
       horasAtendidas: calc.totals.horas,
       ocupacaoReal: safeDiv(calc.totals.horas, horaC.horasDisponiveis),
+      // Quanto deixa na mesa por mês cobrando menos que o preço justo (só serviços com "cobra hoje").
+      perdaMensal: calc.rows.reduce((s, r) => {
+        const hoje = parseBR(r.cobraHoje);
+        return s + (hoje > 0 ? Math.max(0, r._precoParticular - hoje) * parseBR(r.atend) : 0);
+      }, 0),
       custoHora: horaC.custoHora,
       receita: calc.totals.receita,
       liquido,
@@ -1595,7 +1643,98 @@ function renderStepMeta(panel){
 /* Etapa: Insumos / Matéria-Prima                                          */
 /* ---------------------------------------------------------------------- */
 
+// Materiais odontológicos comuns, pra marcar em vez de digitar. Só nome e quantidade
+// típica da embalagem — o PREÇO o aluno preenche com o que ele paga.
+const MATERIAIS_ODONTO = [
+  ['Luvas de procedimento (caixa)', 100], ['Máscara descartável (caixa)', 50], ['Gorro / touca (pacote)', 100],
+  ['Avental descartável (pacote)', 10], ['Babador / guardanapo descartável (pacote)', 100], ['Sugador descartável (pacote)', 40],
+  ['Copo descartável (pacote)', 100], ['Rolete de algodão (pacote)', 100], ['Anestésico (caixa de tubetes)', 50],
+  ['Agulha gengival (caixa)', 100], ['Resina composta (seringa)', 1], ['Ácido fosfórico (seringa)', 1],
+  ['Sistema adesivo (frasco)', 1], ['Pasta profilática (pote)', 1], ['Flúor gel (frasco)', 1],
+  ['Envelope para esterilização (caixa)', 200], ['Filme PVC / barreira (rolo)', 1], ['Fio de sutura (caixa)', 24],
+  ['Broca (unidade)', 1], ['Escova de Robinson (unidade)', 1],
+];
+
+function renderStepInsumosPrestador(panel){
+  const m = MODELS[APP.model];
+  const st = APP.state;
+  panelHead(panel, '5º passo — Conhecer', 'Insumos',
+    'Os materiais que você usa nos atendimentos. Preencha só três coisas: o nome, quanto pagou e quantas unidades vêm. O custo de cada unidade sai sozinho.');
+  const body = el('div', {class:'panel-body'});
+  const list = el('div', {class:'ins-list'});
+  body.appendChild(list);
+  const usoCount = (id) => (st.calcular||[]).filter(r => r.matModo === 'lista' && (r.materiais||[]).some(x => x.id === id)).length;
+
+  function rebuild(){
+    list.innerHTML = '';
+    list.appendChild(el('div', {class:'ins-row ins-head'}, [
+      el('span', {}, ['Material']), el('span', {}, ['Preço pago (R$)']), el('span', {}, ['Unidades que vêm']), el('span', {}, ['Custo por unidade']), el('span'),
+    ]));
+    (st.insumos||[]).forEach((r, i) => {
+      if (!r.id) r.id = uid();
+      const row = el('div', {class:'ins-row'});
+      const nome = el('input', {class:'inp text-left', value:r.nome||'', placeholder:'ex.: luvas (caixa)'});
+      nome.addEventListener('input', () => { r.nome = nome.value; persist(); });
+      const out = el('b', {class:'mono'}, [fmtBRL(insumoCustoUn(r))]);
+      const upd = () => { out.textContent = fmtBRL(insumoCustoUn(r)); };
+      const valor = numberInput({value:r.valor, kind:'brl', onInput:(n)=>{ r.valor=n; persist(); upd(); }});
+      if (!parseBR(r.valor)) valor.querySelector('input').classList.add('ins-falta');
+      const usos = usoCount(r.id);
+      row.appendChild(el('div', {}, [nome, usos ? el('div', {class:'help', style:'margin:2px 0 0;'}, ['usado em ' + usos + (usos===1?' serviço':' serviços')]) : null]));
+      row.appendChild(valor);
+      row.appendChild(numberInput({value:r.qtd, kind:'num', dec:0, onInput:(n)=>{ r.qtd=n; persist(); upd(); }}));
+      row.appendChild(out);
+      row.appendChild(el('button', {class:'row-del', title:'remover', onclick:()=>{
+        if (usos && !confirm('Esse material está em ' + usos + (usos===1?' serviço':' serviços') + '. Remover mesmo assim?')) return;
+        st.insumos.splice(i,1); persist(); rebuild();
+      }}, ['✕']));
+      list.appendChild(row);
+    });
+  }
+  rebuild();
+
+  const btns = el('div', {style:'display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;'});
+  btns.appendChild(el('button', {class:'btn btn-secondary btn-sm', type:'button', onclick:()=>{
+    st.insumos.push({id:uid(), codigo:'', nome:'', unidade:'', qtd:1, valor:0}); persist(); rebuild();
+  }}, ['+ Adicionar material']));
+  const prontoBtn = el('button', {class:'btn btn-secondary btn-sm', type:'button'}, ['+ Escolher da lista pronta']);
+  btns.appendChild(prontoBtn);
+  body.appendChild(btns);
+
+  const picker = el('div', {class:'svc-picker', style:'display:none;'});
+  prontoBtn.addEventListener('click', () => { drawPicker(); picker.style.display = picker.style.display === 'none' ? '' : 'none'; });
+  function drawPicker(){
+    picker.innerHTML = '';
+    const ja = new Set((st.insumos||[]).map(x => (x.nome||'').trim().toLowerCase()));
+    const faltam = MATERIAIS_ODONTO.filter(([n]) => !ja.has(n.toLowerCase()));
+    if (!faltam.length){ picker.appendChild(el('p', {class:'help'}, ['Você já adicionou todos os itens da lista pronta.'])); return; }
+    picker.appendChild(el('p', {class:'help', style:'margin-top:0;'}, ['Marque o que você usa. Depois é só preencher o preço que você paga.']));
+    const marcados = new Set();
+    const chips = el('div', {class:'svc-chips'});
+    faltam.forEach(([n]) => {
+      const c = el('button', {type:'button', class:'svc-chip'}, [n]);
+      c.addEventListener('click', () => { if (marcados.has(n)){ marcados.delete(n); c.classList.remove('on'); } else { marcados.add(n); c.classList.add('on'); } });
+      chips.appendChild(c);
+    });
+    picker.appendChild(chips);
+    picker.appendChild(el('button', {class:'btn btn-primary btn-sm', type:'button', style:'margin-top:10px;', onclick:()=>{
+      faltam.filter(([n]) => marcados.has(n)).forEach(([n, q]) => st.insumos.push({id:uid(), codigo:'', nome:n, unidade:'', qtd:q, valor:0}));
+      picker.style.display = 'none'; persist(); rebuild();
+    }}, ['Adicionar os marcados']));
+  }
+  body.appendChild(picker);
+
+  body.appendChild(el('div', {class:'callout'}, [
+    'Na etapa ', el('b',{},['Meus Serviços']), ', em cada serviço, escolha ', el('b',{},['"Escolher da lista"']),
+    ' e diga quanto de cada material usa (ex.: 2 luvas, 1 máscara). O custo do material entra sozinho — e se o preço mudar aqui, todos os serviços se atualizam.',
+  ]));
+  body.appendChild(el('p', {class:'help'}, ['Os campos em destaque estão sem preço: preencha com o valor que você paga, senão o material conta como R$ 0.']));
+  panel.appendChild(body);
+  footNav(panel, {});
+}
+
 function renderStepInsumos(panel){
+  if (APP.model === 'prestador') return renderStepInsumosPrestador(panel);
   const m = MODELS[APP.model];
   panelHead(panel, '5º passo — Conhecer', m.insumosLabel, m.insumosDesc);
   const body = el('div', {class:'panel-body'});
@@ -1935,7 +2074,9 @@ function exampleBadge(){
 function renderStepCalcular(panel){
   const m = MODELS[APP.model];
   panelHead(panel, '6º passo — Calcular', m.calcTitle,
-    'Cada ' + m.calcRowNoun + ' com seus custos, impostos e margem — a planilha calcula o preço certo, um por um. Os itens marcados "exemplo" são apenas ilustração: edite os valores ou apague a linha.');
+    APP.model === 'prestador'
+      ? 'Um cartão por serviço: responda 4 perguntas e veja o preço justo na hora. Os marcados "exemplo" são só ilustração — edite ou apague.'
+      : 'Cada ' + m.calcRowNoun + ' com seus custos, impostos e margem — a planilha calcula o preço certo, um por um. Os itens marcados "exemplo" são apenas ilustração: edite os valores ou apague a linha.');
   panel.querySelector('.panel-head').appendChild(legendRow());
   const body = el('div', {class:'panel-body'});
   const wrap = el('div', {class:'table-wrap'});
@@ -1949,119 +2090,253 @@ function renderStepCalcular(panel){
   footNav(panel, {});
 }
 
-/* ======================= PRESTADOR ======================= */
+/* ======================= PRESTADOR (cartões) ======================= */
+// Serviços prontos pra escolher. Durações são SUGESTÕES — o aluno ajusta à realidade dele.
+const SERVICOS_PRONTOS = [
+  {grupo:'Odontologia', itens:[
+    ['Avaliação / consulta inicial', 45], ['Profilaxia (limpeza)', 60], ['Restauração em resina', 60],
+    ['Tratamento de canal (por sessão)', 90], ['Extração simples', 45], ['Clareamento em consultório (sessão)', 90],
+    ['Raspagem periodontal (por sessão)', 60], ['Aplicação de flúor / selante', 30], ['Atendimento de urgência', 45],
+    ['Retorno / manutenção', 30],
+  ]},
+  {grupo:'Outros atendimentos', itens:[
+    ['Consulta', 60], ['Retorno', 30], ['Sessão', 60], ['Teleconsulta (online)', 45],
+  ]},
+];
+
+function statusFrase(status){
+  if (status === 'otimo') return '🟢 Ótimo: sobra bem mais que o custo da sua hora.';
+  if (status === 'ok') return '🟡 OK: paga o seu tempo, mas sobra pouco.';
+  if (status === 'baixo') return '🔴 Prejuízo: com esse preço, este atendimento não paga nem o seu tempo.';
+  return 'Preencha quantos atendimentos por mês pra ver o resultado.';
+}
 
 function buildCalcPrestador(wrap, body){
-  const table = el('table', {class:'grid'});
-  const heads = ['Serviço / procedimento','Atend./mês','Duração (h)','Insumos (R$)','Outros custos (R$)','Custo tempo','Custo direto',
-    'Impostos %','Repasse convênio %','Comissão %','Taxa cartão %','Margem %','Preço particular','Preço convênio','Líquido/atend.','Horas totais/mês','Receita mês','Status',''];
-  table.appendChild(el('thead',{},[el('tr',{}, heads.map(h=>el('th',{},[h])))]));
-  const tbody = el('tbody');
-  table.appendChild(tbody);
+  const st = APP.state;
+  const g = st.calcGlobal || (st.calcGlobal = deriveCalcGlobal(st.calcular));
+  wrap.className = 'svc-wrap';
+  const $ = (id) => document.getElementById(id);
+  const setTxt = (id, t) => { const e = $(id); if (e) e.textContent = t; };
+  function calc(){ return computeCalcAll('prestador', st.calcular, computeHora('prestador', st), st); }
 
-  function calc(){ return computeCalcAll('prestador', APP.state.calcular, computeHora('prestador', APP.state)); }
+  // ---------- configurações gerais ----------
+  const gbox = el('div', {class:'svc-global'});
+  gbox.appendChild(el('div', {class:'cat-title'}, ['Valem para todos os serviços']));
+  const gRow = (label, help, key) => {
+    const r = el('div', {class:'field-row'});
+    r.appendChild(el('label', {}, [label, help ? el('div',{class:'help'},[help]) : null]));
+    r.appendChild(numberInput({value:g[key], kind:'pct', onInput:(n)=>{ g[key] = n; persist(); refreshAll(); }}));
+    gbox.appendChild(r);
+  };
+  gRow('Imposto', 'Simples Nacional, ISS, carnê-leão… em % do que você recebe.', 'impostos');
+  gRow('Taxa da maquininha / cartão', 'Média do que a maquininha desconta.', 'cartao');
+  gRow('Comissão', 'Se você paga comissão a alguém por atendimento. Senão, deixe 0.', 'comissao');
+  gRow('Margem de lucro desejada', 'Quanto do preço você quer que vire lucro. 30% a 50% é comum.', 'margem');
+  const convChk = el('input', {type:'checkbox', id:'svc-convenio'});
+  convChk.checked = !!g.convenio;
+  convChk.addEventListener('change', () => { g.convenio = convChk.checked; persist(); rebuild(); });
+  gbox.appendChild(el('label', {for:'svc-convenio', class:'rendas-toggle', style:'margin-top:8px;'}, [convChk,
+    el('span', {}, [el('b',{},['Atendo convênio']), el('div',{class:'help'},['Marque pra informar, em cada serviço, quanto o convênio retém (repasse).'])])]));
+  wrap.appendChild(gbox);
 
-  function refresh(){
-    const {rows, totals} = calc();
-    rows.forEach((r,i) => {
-      setTxt('c-tempo-'+i, fmtBRL(r._custoTempo));
-      setTxt('c-direto-'+i, fmtBRL(r._custoDireto));
-      setTxt('c-partic-'+i, fmtBRL(r._precoParticular));
-      setTxt('c-conv-'+i, fmtBRL(r._precoConvenio));
-      setTxt('c-liq-'+i, fmtBRL(r._liquido));
-      setTxt('c-horas-'+i, fmtNum(r._horasTotais,2));
-      setTxt('c-receita-'+i, fmtBRL(r._receita));
-      setPill('c-status-'+i, r._status);
-    });
-    setTxt('c-tot-atend', fmtNum(totals.atendimentos,0));
-    setTxt('c-tot-liq', fmtBRL(totals.liquido));
-    setTxt('c-tot-horas', fmtNum(totals.horas,2));
-    setTxt('c-tot-receita', fmtBRL(totals.receita));
-  }
-  function setTxt(id,t){ const e=document.getElementById(id); if(e) e.textContent=t; }
-  function setPill(id,status){ const e=document.getElementById(id); if(e){ e.innerHTML=''; e.appendChild(statusPillNode(status)); } }
+  // ---------- cartões ----------
+  const list = el('div', {class:'svc-list'});
+  wrap.appendChild(list);
 
   function rebuild(){
-    tbody.innerHTML = '';
-    const {rows} = calc();
-    APP.state.calcular.forEach((r,i) => tbody.appendChild(buildRow(r,i,rows[i])));
+    list.innerHTML = '';
+    st.calcular.forEach((r, i) => list.appendChild(card(r, i)));
+    refreshAll();
   }
 
-  function buildRow(r, i, computed){
-    const tr = el('tr');
-    const nameTd = el('td', {class:'col-name'});
-    const nameInp = el('input', {class:'inp text-left', value:r.nome||''});
-    nameInp.addEventListener('input', () => { r.nome = nameInp.value; persist(); });
-    nameTd.appendChild(nameInp);
-    if (r._example) nameTd.appendChild(exampleBadge());
-    tr.appendChild(nameTd);
+  function card(r, i){
+    if (!Array.isArray(r.materiais)) r.materiais = [];
+    if (!r.matModo) r.matModo = 'valor';
+    const root = el('div', {class:'svc-card'});
 
-    tr.appendChild(td(numberInput({value:r.atend, kind:'num', dec:0, onInput:(n)=>{r.atend=n;persist();refresh();}})));
-    tr.appendChild(td(numberInput({value:r.dur, kind:'num', dec:2, onInput:(n)=>{r.dur=n;persist();refresh();}})));
+    // cabeçalho
+    const head = el('div', {class:'svc-head'});
+    const nome = el('input', {class:'inp text-left svc-nome', value:r.nome||'', placeholder:'nome do serviço'});
+    nome.addEventListener('input', () => { r.nome = nome.value; delete r._example; persist(); });
+    head.appendChild(nome);
+    if (r._example) head.appendChild(exampleBadge());
+    head.appendChild(el('button', {class:'row-del', title:'remover serviço', onclick:()=>{ st.calcular.splice(i,1); persist(); rebuild(); }}, ['✕']));
+    root.appendChild(head);
 
-    const insTd = el('td');
-    const insWrap = el('div', {style:'display:flex;gap:4px;align-items:center;'});
-    insWrap.appendChild(numberInput({value:r.insumos, kind:'brl', onInput:(n)=>{r.insumos=n;persist();refresh();}}));
-    if (MODELS.prestador.hasInsumos){
-      const btn = el('button', {class:'btn-ghost btn-sm', title:'somar a partir dos insumos', style:'padding:6px 8px;'}, ['🧮']);
-      btn.addEventListener('click', (e) => {
-        openInsumoPopover(e.currentTarget, (total) => {
-          r.insumos = total; persist();
-          insWrap.querySelector('input').value = fmtNum(total,2);
-          refresh();
+    const cols = el('div', {class:'svc-cols'});
+    // perguntas
+    const qs = el('div', {class:'svc-qs'});
+    const q = (label, help, input) => {
+      qs.appendChild(el('div', {class:'svc-q'}, [el('label', {}, [label, help ? el('div',{class:'help'},[help]) : null]), input]));
+    };
+    q('Quantos por mês?', null, numberInput({value:r.atend, kind:'num', dec:0, onInput:(n)=>{ r.atend=n; persist(); refreshAll(); }}));
+    q('Quanto tempo leva? (minutos)', 'Contando preparo e prontuário.', numberInput({value:Math.round(parseBR(r.dur)*60), kind:'num', dec:0, onInput:(n)=>{ r.dur = n/60; persist(); refreshAll(); }}));
+    q('Quanto você cobra hoje? (R$)', 'Particular. Deixe 0 se ainda não cobra.', numberInput({value:r.cobraHoje||0, kind:'brl', onInput:(n)=>{ r.cobraHoje=n; persist(); refreshAll(); }}));
+
+    // material
+    const mat = el('div', {class:'svc-q'});
+    mat.appendChild(el('label', {}, ['Quanto gasta de material?']));
+    const modes = el('div', {class:'svc-seg'});
+    const bValor = el('button', {type:'button', class: r.matModo==='valor' ? 'on' : ''}, ['Valor aproximado']);
+    const bLista = el('button', {type:'button', class: r.matModo==='lista' ? 'on' : ''}, ['Escolher da lista']);
+    bValor.addEventListener('click', () => { r.matModo = 'valor'; persist(); rebuild(); });
+    bLista.addEventListener('click', () => { r.matModo = 'lista'; persist(); rebuild(); });
+    modes.appendChild(bValor); modes.appendChild(bLista);
+    mat.appendChild(modes);
+    if (r.matModo === 'valor'){
+      mat.appendChild(numberInput({value:r.insumos||0, kind:'brl', onInput:(n)=>{ r.insumos=n; persist(); refreshAll(); }}));
+    } else {
+      const insumos = st.insumos || [];
+      if (!insumos.length){
+        mat.appendChild(el('div', {class:'help'}, ['Você ainda não cadastrou materiais. ',
+          el('button', {class:'btn btn-secondary btn-sm', type:'button', onclick:()=>goStep('insumos')}, ['Ir para Insumos'])]));
+      } else {
+        const byId = {}; insumos.forEach(x => byId[x.id] = x);
+        r.materiais = r.materiais.filter(m => byId[m.id]);
+        const chips = el('div', {class:'svc-mats'});
+        r.materiais.forEach((m, mi) => {
+          const ins = byId[m.id];
+          const qtyInp = numberInput({value:m.qtd, kind:'num', dec:2, onInput:(n)=>{ m.qtd=n; persist(); refreshAll(); updChip(); }});
+          qtyInp.style.width = '70px';
+          const custo = el('span', {class:'mono help', style:'margin:0;'}, ['']);
+          const updChip = () => { custo.textContent = '= ' + fmtBRL(parseBR(m.qtd) * insumoCustoUn(ins)); };
+          updChip();
+          chips.appendChild(el('div', {class:'svc-mat'}, [
+            el('span', {class:'svc-mat-nome'}, [ins.nome || '(sem nome)']), el('span',{class:'help',style:'margin:0;'},['×']), qtyInp, custo,
+            el('button', {class:'row-del', type:'button', title:'tirar', onclick:()=>{ r.materiais.splice(mi,1); persist(); rebuild(); }}, ['✕']),
+          ]));
         });
-      });
-      insWrap.appendChild(btn);
+        mat.appendChild(chips);
+        const disponiveis = insumos.filter(x => !r.materiais.some(m => m.id === x.id));
+        if (disponiveis.length){
+          const sel = el('select', {class:'inp', style:'margin-top:6px;'});
+          sel.appendChild(el('option', {value:''}, ['+ adicionar material…']));
+          disponiveis.forEach(x => sel.appendChild(el('option', {value:x.id}, [(x.nome||'(sem nome)') + ' — ' + fmtBRL(insumoCustoUn(x)) + '/un'])));
+          sel.addEventListener('change', () => { if (!sel.value) return; r.materiais.push({id:sel.value, qtd:1}); persist(); rebuild(); });
+          mat.appendChild(sel);
+        }
+        mat.appendChild(el('div', {class:'help'}, ['Total de material: ', el('b', {id:'svc-mat-'+i, class:'mono'}, [''])]));
+      }
     }
-    insTd.appendChild(insWrap);
-    tr.appendChild(insTd);
+    qs.appendChild(mat);
+    cols.appendChild(qs);
 
-    tr.appendChild(td(numberInput({value:r.outros, kind:'brl', onInput:(n)=>{r.outros=n;persist();refresh();}})));
-    tr.appendChild(td(lockedOut('c-tempo-'+i, fmtBRL(computed._custoTempo))));
-    tr.appendChild(td(lockedOut('c-direto-'+i, fmtBRL(computed._custoDireto))));
-    tr.appendChild(td(numberInput({value:r.impostos, kind:'pct', onInput:(n)=>{r.impostos=n;persist();refresh();}})));
-    tr.appendChild(td(numberInput({value:r.repasse, kind:'pct', onInput:(n)=>{r.repasse=n;persist();refresh();}})));
-    tr.appendChild(td(numberInput({value:r.comissao, kind:'pct', onInput:(n)=>{r.comissao=n;persist();refresh();}})));
-    tr.appendChild(td(numberInput({value:r.cartao, kind:'pct', onInput:(n)=>{r.cartao=n;persist();refresh();}})));
-    tr.appendChild(td(numberInput({value:r.margem, kind:'pct', onInput:(n)=>{r.margem=n;persist();refresh();}})));
-    tr.appendChild(td(resultOut('c-partic-'+i, fmtBRL(computed._precoParticular))));
-    tr.appendChild(td(resultOut('c-conv-'+i, fmtBRL(computed._precoConvenio))));
-    tr.appendChild(td(resultOut('c-liq-'+i, fmtBRL(computed._liquido))));
-    tr.appendChild(td(lockedOut('c-horas-'+i, fmtNum(computed._horasTotais,2))));
-    tr.appendChild(td(resultOut('c-receita-'+i, fmtBRL(computed._receita))));
-    const statusTd = el('td', {id:'c-status-'+i});
-    statusTd.appendChild(statusPillNode(computed._status));
-    tr.appendChild(statusTd);
-    const delTd = el('td');
-    delTd.appendChild(el('button', {class:'row-del', onclick:()=>{ APP.state.calcular.splice(i,1); persist(); rebuild(); refresh(); }}, ['✕']));
-    tr.appendChild(delTd);
-    return tr;
+    // resultado
+    const res = el('div', {class:'svc-res'});
+    res.appendChild(el('div', {class:'svc-res-lbl'}, ['Preço justo (particular)']));
+    res.appendChild(el('div', {class:'svc-res-val', id:'svc-preco-'+i}, ['']));
+    if (g.convenio) res.appendChild(el('div', {class:'help', id:'svc-convline-'+i}, ['']));
+    res.appendChild(el('div', {class:'svc-res-line'}, ['Sobra pra você por atendimento: ', el('b', {id:'svc-liq-'+i, class:'mono'}, [''])]));
+    res.appendChild(el('div', {class:'svc-status', id:'svc-status-'+i}, ['']));
+    res.appendChild(el('div', {class:'svc-diff', id:'svc-diff-'+i, style:'display:none;'}));
+    cols.appendChild(res);
+    root.appendChild(cols);
+
+    // detalhes
+    const det = el('details', {class:'svc-det'});
+    det.appendChild(el('summary', {}, ['Mais detalhes']));
+    const dRow = (label, help, input) => det.appendChild(el('div', {class:'field-row'}, [el('label', {}, [label, help ? el('div',{class:'help'},[help]) : null]), input]));
+    dRow('Outros custos por atendimento (R$)', 'Laboratório, prótese, material especial…', numberInput({value:r.outros||0, kind:'brl', onInput:(n)=>{ r.outros=n; persist(); refreshAll(); }}));
+    if (g.convenio) dRow('Repasse do convênio', 'Quanto o convênio retém, em %. Deixe 0 se este serviço for só particular.', numberInput({value:r.repasse||0, kind:'pct', onInput:(n)=>{ r.repasse=n; persist(); refreshAll(); }}));
+    const padChk = el('input', {type:'checkbox'});
+    padChk.checked = r.usaPadrao !== false;
+    padChk.addEventListener('change', () => {
+      r.usaPadrao = padChk.checked;
+      if (!r.usaPadrao){ ['impostos','cartao','comissao','margem'].forEach(k => { r[k] = g[k]; }); }
+      persist(); rebuild();
+    });
+    det.appendChild(el('label', {class:'rendas-toggle', style:'margin-top:8px;'}, [padChk, el('span', {}, ['Usar as configurações gerais (imposto, cartão, comissão e margem)'])]));
+    if (r.usaPadrao === false){
+      [['Imposto','impostos'],['Taxa de cartão','cartao'],['Comissão','comissao'],['Margem de lucro','margem']].forEach(([lbl,k]) =>
+        dRow(lbl + ' (só deste serviço)', null, numberInput({value:r[k]||0, kind:'pct', onInput:(n)=>{ r[k]=n; persist(); refreshAll(); }})));
+    }
+    const info = el('div', {class:'svc-info'});
+    [['Custo do seu tempo','svc-tempo-'],['Custo total por atendimento','svc-direto-'],['Horas no mês','svc-horas-'],['Receita no mês','svc-receita-']].forEach(([lbl,id]) =>
+      info.appendChild(el('div', {}, [el('span', {class:'help', style:'margin:0;'}, [lbl]), el('b', {class:'mono', id:id+i}, [''])])));
+    det.appendChild(info);
+    root.appendChild(det);
+    return root;
   }
-  function td(node){ const t = el('td'); t.appendChild(node); return t; }
 
-  rebuild();
-  wrap.appendChild(table);
+  // ---------- totais ----------
+  const tot = el('div', {class:'svc-total'});
+  tot.appendChild(el('div', {}, [el('span',{class:'help',style:'margin:0;'},['Atendimentos no mês']), el('b',{id:'svc-tot-atend',class:'mono'},[''])]));
+  tot.appendChild(el('div', {}, [el('span',{class:'help',style:'margin:0;'},['Horas de agenda']), el('b',{id:'svc-tot-horas',class:'mono'},[''])]));
+  tot.appendChild(el('div', {}, [el('span',{class:'help',style:'margin:0;'},['Receita no mês']), el('b',{id:'svc-tot-receita',class:'mono'},[''])]));
+  tot.appendChild(el('div', {}, [el('span',{class:'help',style:'margin:0;'},['Sobra pra você no mês']), el('b',{id:'svc-tot-liq',class:'mono',style:'color:var(--green-strong);'},[''])]));
+  tot.appendChild(el('div', {id:'svc-tot-perda-box', style:'display:none;'}, [el('span',{class:'help',style:'margin:0;'},['Deixando na mesa por mês']), el('b',{id:'svc-tot-perda',class:'mono',style:'color:var(--red);'},[''])]));
 
-  const initTotals = calc().totals;
-  const tfoot = el('tfoot', {}, [el('tr', {}, [
-    el('td', {style:'font-weight:800;'}, ['TOTAL MÊS']),
-    el('td', {}, [lockedOut('c-tot-atend', fmtNum(initTotals.atendimentos,0))]),
-    el('td'), el('td'), el('td'), el('td'), el('td'), el('td'), el('td'), el('td'), el('td'), el('td'),
-    el('td'), el('td'), el('td', {}, [resultOut('c-tot-liq',fmtBRL(initTotals.liquido))]), el('td', {}, [lockedOut('c-tot-horas',fmtNum(initTotals.horas,2))]),
-    el('td', {}, [resultOut('c-tot-receita',fmtBRL(initTotals.receita))]), el('td'), el('td'),
-  ])]);
-  table.appendChild(tfoot);
+  // ---------- adicionar serviço (lista pronta) ----------
+  const addBox = el('div', {class:'svc-add'});
+  const addBtn = el('button', {class:'btn btn-primary btn-sm', type:'button'}, ['+ Adicionar serviço']);
+  const picker = el('div', {class:'svc-picker', style:'display:none;'});
+  addBtn.addEventListener('click', () => { picker.style.display = picker.style.display === 'none' ? '' : 'none'; });
+  const novo = (nome, min) => {
+    st.calcular.push({nome, atend:0, dur:min/60, insumos:0, outros:0, impostos:g.impostos, repasse:0, comissao:g.comissao, cartao:g.cartao, margem:g.margem,
+      usaPadrao:true, matModo:'valor', materiais:[], cobraHoje:0});
+    picker.style.display = 'none'; persist(); rebuild();
+  };
+  SERVICOS_PRONTOS.forEach(grp => {
+    picker.appendChild(el('div', {class:'cat-title', style:'margin-top:8px;'}, [grp.grupo]));
+    const chips = el('div', {class:'svc-chips'});
+    grp.itens.forEach(([nome, min]) => chips.appendChild(el('button', {type:'button', class:'svc-chip', onclick:()=>novo(nome, min)}, [nome, el('span', {class:'help', style:'margin:0 0 0 6px;display:inline;'}, ['~' + min + ' min'])])));
+    picker.appendChild(chips);
+  });
+  picker.appendChild(el('button', {type:'button', class:'svc-chip', style:'margin-top:8px;', onclick:()=>novo('', 60)}, ['✏️ Outro serviço (em branco)']));
+  picker.appendChild(el('p', {class:'help'}, ['As durações são só sugestões — ajuste ao seu ritmo de atendimento.']));
+  addBox.appendChild(addBtn); addBox.appendChild(picker);
 
-  body.appendChild(addRowBtn('adicionar serviço', () => {
-    APP.state.calcular.push({nome:'', atend:0, dur:0, insumos:0, outros:0, impostos:.06, repasse:0, comissao:0, cartao:.03, margem:.4});
-    persist(); rebuild(); refresh();
-  }));
+  function refreshAll(){
+    const {rows, totals} = calc();
+    const horaC = computeHora('prestador', st);
+    let perda = 0;
+    rows.forEach((c, i) => {
+      setTxt('svc-preco-'+i, fmtBRL(c._precoParticular));
+      const cl = $('svc-convline-'+i);
+      if (cl) cl.textContent = parseBR(c.repasse) > 0 ? 'Preço pra convênio: ' + fmtBRL(c._precoConvenio) : 'Serviço particular (sem repasse de convênio).';
+      setTxt('svc-liq-'+i, fmtBRL(c._liquido));
+      setTxt('svc-status-'+i, statusFrase(c._status));
+      const se = $('svc-status-'+i); if (se) se.className = 'svc-status st-' + (c._status||'none');
+      setTxt('svc-mat-'+i, fmtBRL(parseBR(c.insumos)));
+      setTxt('svc-tempo-'+i, fmtBRL(c._custoTempo));
+      setTxt('svc-direto-'+i, fmtBRL(c._custoDireto));
+      setTxt('svc-horas-'+i, fmtNum(c._horasTotais, 1) + ' h');
+      setTxt('svc-receita-'+i, fmtBRL(c._receita));
+      const d = $('svc-diff-'+i);
+      const hoje = parseBR(c.cobraHoje);
+      if (d){
+        if (hoje > 0 && c._precoParticular > 0){
+          const dif = c._precoParticular - hoje;
+          d.style.display = '';
+          if (dif > 0.5){
+            const mes = dif * parseBR(c.atend); perda += mes;
+            d.className = 'svc-diff falta';
+            d.innerHTML = 'Você cobra <b>' + fmtBRL(dif) + ' a menos</b> que o preço justo' + (mes > 0 ? ' — <b>' + fmtBRL(mes) + ' por mês</b> que ficam na mesa.' : '.');
+          } else {
+            d.className = 'svc-diff ok';
+            d.innerHTML = '👍 Seu preço atual (' + fmtBRL(hoje) + ') já cobre o preço justo.';
+          }
+        } else d.style.display = 'none';
+      }
+    });
+    setTxt('svc-tot-atend', fmtNum(totals.atendimentos, 0));
+    setTxt('svc-tot-horas', fmtNum(totals.horas, 1) + ' h de ' + fmtNum(horaC.horasDisponiveis || 0, 0) + ' h disponíveis');
+    setTxt('svc-tot-receita', fmtBRL(totals.receita));
+    setTxt('svc-tot-liq', fmtBRL(totals.liquido));
+    const pb = $('svc-tot-perda-box'); if (pb) pb.style.display = perda > 0 ? '' : 'none';
+    setTxt('svc-tot-perda', fmtBRL(perda));
+  }
+
+  wrap.appendChild(addBox);
+  wrap.appendChild(tot);
   body.appendChild(el('ul', {class:'note-list', style:'margin-top:16px;'}, [
-    el('li', {}, ['Duração = tempo TOTAL do atendimento (preparo + consulta + prontuário).']),
-    el('li', {}, ['Se o serviço é só particular, deixe "Repasse" em 0%. Se é só convênio, ignore o preço particular.']),
-    el('li', {}, ['Status compara líquido/hora com seu custo/hora. 🔴 significa que você está perdendo dinheiro nesse atendimento.']),
+    el('li', {}, ['O preço justo cobre o seu tempo (pelo custo da sua hora), o material, os outros custos, os impostos, as taxas e ainda deixa a margem de lucro que você escolheu.']),
+    el('li', {}, ['🔴 significa que o atendimento não paga nem o seu tempo; 🟢 significa que sobra pelo menos o dobro do custo da sua hora.']),
   ]));
+  rebuild();
+  requestAnimationFrame(refreshAll);
 }
+
 /* ======================= PRODUTO FÍSICO ======================= */
 
 function buildCalcProduto(wrap, body){
@@ -2318,6 +2593,7 @@ function renderStepResumo(panel){
     grid.appendChild(statTile(null,'💰 Custo por hora', fmtBRL(r.custoHora)));
     grid.appendChild(statTile(null,'📥 Receita bruta projetada', fmtBRL(r.receita)));
     grid.appendChild(statTile(null,'🏆 Líquido que sobra pra você', fmtBRL(r.liquido), 'hi'));
+    if (r.perdaMensal > 0) grid.appendChild(statTile(null,'💸 Deixando na mesa por mês (preço atual abaixo do justo)', fmtBRL(r.perdaMensal), 'warn'));
     body.appendChild(grid);
     body.appendChild(verdictBanner(r.bateMeta, r.diff, 'Líquido após impostos, repasses e custos, comparado com ' + (r.outrasRendas > 0 ? 'o que este negócio precisa entregar (meta total menos suas outras rendas).' : 'sua meta de lucro.')));
     body.appendChild(el('div', {class:'callout'}, ['Cada horário vago na sua agenda é dinheiro que você já gastou e não vai receber de volta. Preço justo protege sua saúde financeira — e é o primeiro passo pra cuidar bem dos seus pacientes.']));
