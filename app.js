@@ -251,10 +251,10 @@ const SONHO_TIPOS = [
   {key:'viagem', label:'Viagem'},
   {key:'outro', label:'Outro (escreva)'},
 ];
-// Correção do custo dos sonhos: IGP-M (inflação) + 10% de juros ao ano, compostos.
-// O IGP-M é editável pelo aluno (acumulado 12 meses, divulgado pela FGV).
-const SONHOS_IGPM_PADRAO = 0.04;
-const SONHOS_JUROS_ANUAL = 0.10;
+// Correção do custo dos sonhos pagos à vista (Viagem, Outro sem financiamento):
+// só a inflação oficial (IPCA, IBGE). Quem junta dinheiro não paga juros.
+// Padrão: IPCA acumulado 12 meses até set/2026 = 4,58%. Editável pelo aluno.
+const SONHOS_IPCA_PADRAO = 0.0458;
 
 // "Moradia" tem matemática própria: em vez da correção genérica acima, a casa
 // própria normalmente é FINANCIADA — então calculamos a parcela mensal de
@@ -286,12 +286,26 @@ const AUTO_TAXAS = [
 ];
 const AUTO_TAXA_PADRAO = 'media';
 
+// "Outro" pode ser pago à vista (correção só pelo IPCA) ou financiado/parcelado.
+// Referências: crédito pessoal não consignado — média do Banco Central, ago/2026
+// (≈110% a.a.); consignados — medianas do ranking do BC, 7 a 14/out/2026.
+const OUTRO_TAXAS = [
+  {key:'semjuros', label:'Parcelado sem juros (cartão / loja)', taxa:0},
+  {key:'consignado', label:'Consignado (INSS / servidor público)', taxa:0.236},
+  {key:'consigclt', label:'Consignado privado (trabalhador CLT)', taxa:0.468},
+  {key:'pessoal', label:'Crédito pessoal / empréstimo (média do Banco Central)', taxa:1.10},
+  {key:'personalizado', label:'Taxa personalizada (digite ao lado)', taxa:null},
+];
+const OUTRO_TAXA_PADRAO = 'semjuros';
+
 // Configuração por tipo de sonho financiado.
 const FIN_TIPOS = {
   moradia:   {taxas:MORADIA_TAXAS, padrao:MORADIA_TAXA_PADRAO, titulo:'Financiamento da casa própria', btn:'🏠 Financiamento', bem:'imóvel', subsidio:true},
   automovel: {taxas:AUTO_TAXAS,    padrao:AUTO_TAXA_PADRAO,    titulo:'Financiamento do automóvel',   btn:'🚗 Financiamento', bem:'veículo', subsidio:false},
+  outro:     {taxas:OUTRO_TAXAS,   padrao:OUTRO_TAXA_PADRAO,   titulo:'Financiamento / parcelamento', btn:'💳 Financiamento', bem:'sonho',   subsidio:false},
 };
-function isFinanciado(r){ return !!FIN_TIPOS[r.tipo]; }
+// Moradia e Automóvel são sempre financiados; "Outro" só quando o aluno marca.
+function isFinanciado(r){ return !!FIN_TIPOS[r.tipo] && (r.tipo !== 'outro' || !!r.financiar); }
 function finCfg(r){ return FIN_TIPOS[r.tipo] || FIN_TIPOS.moradia; }
 function finTaxaInfo(r){
   const c = finCfg(r);
@@ -338,9 +352,31 @@ function prolaboreAtual(state){
   const p = state.meta && state.meta.prolabore;
   return (p == null || p === '') ? prolaboreSugerido(state) : parseBR(p);
 }
-// Meta de lucro = pró-labore + crescimento profissional.
+// Meta de lucro = pró-labore + crescimento profissional (o que a pessoa precisa por mês, no total).
 function computeMeta(state){
   return prolaboreAtual(state) + parseBR(state.meta && state.meta.crescimento);
+}
+
+// Outras fontes de renda (CLT, outros negócios, investimentos, aluguel…).
+// Elas cobrem parte da meta — então ESTE negócio só precisa entregar o que falta.
+const RENDA_TIPOS = [
+  {key:'clt', label:'Salário CLT', help:'Valor líquido que cai na conta (depois de INSS e IR).'},
+  {key:'negocio', label:'Outro negócio', help:'Lucro que você realmente retira desse outro negócio por mês.'},
+  {key:'investimentos', label:'Investimentos (aplicações, ações, FIIs)', help:'Só o que você saca por mês (juros, dividendos, rendimentos). O que é reinvestido não conta.'},
+  {key:'aluguel', label:'Aluguel recebido', help:'Valor líquido que sobra do aluguel (depois de taxas e impostos).'},
+  {key:'aposentadoria', label:'Aposentadoria / pensão', help:'Valor líquido mensal.'},
+  {key:'outra', label:'Outra (escreva)', help:'Qualquer outra renda que entra todo mês.'},
+];
+function rendaTipo(key){ return RENDA_TIPOS.find(t => t.key===key) || RENDA_TIPOS[RENDA_TIPOS.length-1]; }
+function defaultRendas(){ return {ativo:false, itens:[]}; }
+function sumOutrasRendas(state){
+  const r = state.rendas;
+  if (!r || !r.ativo) return 0;
+  return (r.itens||[]).reduce((s,it) => s + (parseBR(it.valor)||0), 0);
+}
+// Quanto ESTE negócio precisa entregar: meta total − outras rendas (nunca negativo).
+function computeMetaNegocio(state){
+  return Math.max(0, computeMeta(state) - sumOutrasRendas(state));
 }
 function defaultHora(modelKey){
   if (modelKey === 'prestador') return {diasUteis:5, horasDia:8, semanasEfetivas:46, taxaOcupacao:.7};
@@ -363,8 +399,9 @@ function defaultCalc(modelKey){
 function defaultState(modelKey){
   return {
     sonhos: defaultSonhos(),
-    sonhosTaxas: {igpm: SONHOS_IGPM_PADRAO},
+    sonhosTaxas: {ipca: SONHOS_IPCA_PADRAO},
     meta: defaultMeta(modelKey),
+    rendas: defaultRendas(),
     vida: VIDA_FLAT.map(() => 0),
     negocio: negocioFlat(modelKey).map(() => 0),
     insumos: defaultInsumos(modelKey),
@@ -382,6 +419,7 @@ function mergeWithDefaults(modelKey, parsed){
   if (!merged.sonhos) merged.sonhos = def.sonhos;
   normalizeSonhos(merged.sonhos);
   merged.sonhosTaxas = Object.assign({}, def.sonhosTaxas, merged.sonhosTaxas);
+  delete merged.sonhosTaxas.igpm; // versão antiga usava IGP-M + 10% de juros
   if (!merged.calcular || !merged.calcular.length) merged.calcular = def.calcular;
   if (!merged.insumos) merged.insumos = def.insumos;
   merged.hora = Object.assign({}, def.hora, merged.hora);
@@ -392,6 +430,8 @@ function mergeWithDefaults(modelKey, parsed){
     merged.meta.crescimento = parseBR(savedMeta.comp[3]);
   }
   delete merged.meta.comp;
+  merged.rendas = Object.assign({}, def.rendas, parsed.rendas||{});
+  if (!Array.isArray(merged.rendas.itens)) merged.rendas.itens = [];
   merged.meta.valor = computeMeta(merged);
   return merged;
 }
@@ -420,8 +460,8 @@ function sumArr(a){ return (a||[]).reduce((s,v) => s + (parseBR(v)||0), 0); }
 function sumVida(state){ return sumArr(state.vida); }
 function sumNegocio(state){ return sumArr(state.negocio); }
 function sonhosTaxaAnual(state){
-  const igpm = parseBR(((state.sonhosTaxas)||{}).igpm != null ? state.sonhosTaxas.igpm : SONHOS_IGPM_PADRAO);
-  return (1 + igpm) * (1 + SONHOS_JUROS_ANUAL) - 1;
+  const t = (state.sonhosTaxas)||{};
+  return t.ipca != null ? parseBR(t.ipca) : SONHOS_IPCA_PADRAO;
 }
 // --- Moradia: financiamento real (Tabela Price), em vez da correção genérica ---
 function moradiaTaxaAnual(r){
@@ -608,14 +648,16 @@ function computeCalcConhecimento(rows, horaC){
 function computeResumo(modelKey, state){
   const horaC = computeHora(modelKey, state);
   const calc = computeCalcAll(modelKey, state.calcular, horaC);
-  const meta = computeMeta(state);
+  const metaTotal = computeMeta(state);
+  const outrasRendas = sumOutrasRendas(state);
+  const meta = computeMetaNegocio(state); // o que ESTE negócio precisa entregar
   const custoVida = sumVida(state);
   const metaSonhos = sumSonhosMensal(state);
 
   if (modelKey === 'prestador'){
     const liquido = calc.totals.liquido;
     return {
-      meta, custoVida, metaSonhos,
+      meta, metaTotal, outrasRendas, custoVida, metaSonhos,
       custoFixoNegocio: horaC.custoFixoNegocio,
       horasDisponiveis: horaC.horasDisponiveis,
       horasAtendidas: calc.totals.horas,
@@ -631,7 +673,7 @@ function computeResumo(modelKey, state){
   if (modelKey === 'produto'){
     const lucro = calc.totals.lucroLiquido;
     return {
-      meta, custoVida, metaSonhos,
+      meta, metaTotal, outrasRendas, custoVida, metaSonhos,
       custoFixoEmpresa: horaC.custoFixoEmpresa,
       custoHoraEmpresa: horaC.custoHoraEmpresa,
       custoHoraProducao: horaC.custoHoraProducao,
@@ -650,7 +692,7 @@ function computeResumo(modelKey, state){
     if (horasComprometidas > horaC.horasProdutivasMes) capStatus = 'over';
     else if (horasComprometidas > 0.9*horaC.horasProdutivasMes) capStatus = 'alerta';
     return {
-      meta, custoVida, metaSonhos,
+      meta, metaTotal, outrasRendas, custoVida, metaSonhos,
       custoFixoNegocio: horaC.custoFixoNegocio,
       horasProdutivasMes: horaC.horasProdutivasMes,
       custoHora: horaC.custoHora,
@@ -1198,21 +1240,16 @@ function renderStepSonhos(panel){
   const st = APP.state;
   const taxas = st.sonhosTaxas;
 
-  // Taxas de correção
-  const taxaBox = el('div', {class:'cat-group'});
-  taxaBox.appendChild(el('div', {class:'cat-title'}, ['Correção do custo ao longo do prazo']));
-  const igpmRow = el('div', {class:'field-row'});
-  igpmRow.appendChild(el('label', {}, ['IGP-M acumulado 12 meses (inflação)', el('div',{class:'help'},['Atualize com o índice mais recente divulgado pela FGV.'])]));
-  igpmRow.appendChild(numberInput({value:taxas.igpm, kind:'pct', onInput:(n)=>{ taxas.igpm=n; persist(); updateAll(); }}));
-  taxaBox.appendChild(igpmRow);
-  const jurosRow = el('div', {class:'field-row'});
-  jurosRow.appendChild(el('label', {}, ['Juros ao ano']));
-  jurosRow.appendChild(numberInput({value:SONHOS_JUROS_ANUAL, kind:'pct', locked:true}));
-  taxaBox.appendChild(jurosRow);
-  const totRow = el('div', {class:'field-total'});
-  totRow.appendChild(el('label', {}, ['Taxa total de correção ao ano (IGP-M + 10% de juros)']));
-  totRow.appendChild(el('span', {id:'sonho-taxa-total', class:'mono', style:'font-weight:700;'}, [fmtNum(sonhosTaxaAnual(st)*100,2) + '%']));
-  taxaBox.appendChild(totRow);
+  // Correção pela inflação — só para sonhos pagos à vista (Viagem, Outro sem financiamento)
+  const rows = st.sonhos;
+  const precisaCorrecao = () => rows.some(r => r.tipo ? !isFinanciado(r) : parseBR(r.custo) > 0);
+  const taxaBox = el('div', {class:'cat-group', id:'sonho-taxa-box'});
+  taxaBox.appendChild(el('div', {class:'cat-title'}, ['Correção pela inflação (sonhos pagos à vista)']));
+  const ipcaRow = el('div', {class:'field-row'});
+  ipcaRow.appendChild(el('label', {}, ['IPCA acumulado 12 meses', el('div',{class:'help'},['Inflação oficial (IBGE). Vale pra Viagem e Outro sem financiamento: você junta o dinheiro e paga à vista, então não há juros — só a inflação. Em set/2026: 4,58%.'])]));
+  ipcaRow.appendChild(numberInput({value:taxas.ipca, kind:'pct', onInput:(n)=>{ taxas.ipca=n; persist(); updateAll(); }}));
+  taxaBox.appendChild(ipcaRow);
+  taxaBox.style.display = precisaCorrecao() ? '' : 'none';
   body.appendChild(taxaBox);
 
   const wrap = el('div', {class:'table-wrap'});
@@ -1222,7 +1259,6 @@ function renderStepSonhos(panel){
     el('th',{},['Prazo (meses)']), el('th',{},['Custo corrigido (R$)']), el('th',{},['Valor mensal necessário']),
   ])]));
   const tbody = el('tbody');
-  const rows = st.sonhos;
 
   function updateRow(i){
     const r = rows[i];
@@ -1236,7 +1272,7 @@ function renderStepSonhos(panel){
     set('sonho-total-custo', fmtBRL(rows.reduce((s,r)=>s+parseBR(r.custo),0)));
     set('sonho-total-corr', fmtBRL(rows.reduce((s,r)=>s+sonhoCustoCorrigido(st,r),0)));
     set('sonho-total-mensal', fmtBRL(sumSonhosMensal(st)));
-    set('sonho-taxa-total', fmtNum(sonhosTaxaAnual(st)*100,2) + '%');
+    const tb = document.getElementById('sonho-taxa-box'); if (tb) tb.style.display = precisaCorrecao() ? '' : 'none';
   }
   function updateAll(){ rows.forEach((_,i)=>updateRow(i)); updateTotals(); }
 
@@ -1261,11 +1297,25 @@ function renderStepSonhos(panel){
     moradiaBox.appendChild(moradiaBtn);
     moradiaBox.appendChild(moradiaResumo);
     moradiaBox.style.display = isFinanciado(r) ? '' : 'none';
+    const finChk = el('input', {type:'checkbox'});
+    finChk.checked = !!r.financiar;
+    const finLbl = el('label', {class:'help', style:'display:flex;align-items:center;gap:6px;margin:6px 0 0;cursor:pointer;'}, [finChk, 'Vou financiar / parcelar']);
+    finLbl.style.display = r.tipo === 'outro' ? 'flex' : 'none';
+    finChk.addEventListener('change', () => {
+      r.financiar = finChk.checked;
+      if (r.financiar && !r._finOutroInit){ r.entrada = 0; r._finOutroInit = true; }
+      finAjustaPreset(r);
+      moradiaBox.style.display = isFinanciado(r) ? '' : 'none';
+      if (isFinanciado(r)){ moradiaBtn.textContent = finCfg(r).btn; moradiaResumo.textContent = moradiaResumoTexto(r); }
+      persist(); updateRow(i); updateTotals();
+    });
     sel.addEventListener('change', () => {
       r.tipo = sel.value;
       descInput.style.display = r.tipo === 'outro' ? '' : 'none';
       if (r.tipo === 'outro'){ descInput.focus(); }
       else { r.desc = ''; descInput.value = ''; }
+      finLbl.style.display = r.tipo === 'outro' ? 'flex' : 'none';
+      if (r.tipo === 'outro' && r.financiar && !r._finOutroInit){ r.entrada = 0; r._finOutroInit = true; }
       finAjustaPreset(r);
       moradiaBox.style.display = isFinanciado(r) ? '' : 'none';
       if (isFinanciado(r)){ moradiaBtn.textContent = finCfg(r).btn; moradiaResumo.textContent = moradiaResumoTexto(r); }
@@ -1275,6 +1325,7 @@ function renderStepSonhos(panel){
     descInput.addEventListener('input', () => { r.desc = descInput.value; persist(); });
     descTd.appendChild(sel);
     descTd.appendChild(descInput);
+    descTd.appendChild(finLbl);
     descTd.appendChild(moradiaBox);
     tr.appendChild(descTd);
     tr.appendChild(el('td', {}, [numberInput({value:r.custo, kind:'brl', onInput:(n)=>{ r.custo=n; persist(); updateRow(i); updateTotals(); }})]));
@@ -1295,11 +1346,11 @@ function renderStepSonhos(panel){
   wrap.appendChild(table);
   body.appendChild(wrap);
 
-  body.appendChild(el('p', {class:'help'}, ['Para a maioria dos sonhos, o "custo corrigido" aplica a taxa total ao ano sobre o custo de hoje, proporcional ao prazo: custo × (1 + taxa)^(meses ÷ 12), e o valor mensal é o custo corrigido dividido pelo prazo.']));
+  body.appendChild(el('p', {class:'help'}, ['Viagem e Outro sem financiamento: você junta o dinheiro e paga à vista, então o "custo corrigido" aplica só a inflação (IPCA) sobre o custo de hoje, proporcional ao prazo: custo × (1 + IPCA)^(meses ÷ 12). O valor mensal é o custo corrigido dividido pelo prazo.']));
   body.appendChild(el('p', {class:'help'}, [
-    el('b',{},['Moradia e Automóvel são diferentes: ']), 'casa e carro normalmente são financiados, então aqui "Custo hoje" é o valor do bem, "Prazo" é o prazo do financiamento, "Custo corrigido" é tudo que sai do bolso (entrada + todas as parcelas) e "Valor mensal necessário" é a parcela mensal de verdade — calculada pela Tabela Price, no botão "Financiamento" da linha.',
+    el('b',{},['Moradia, Automóvel e Outro financiado são diferentes: ']), 'quando há financiamento, "Custo hoje" é o valor do bem, "Prazo" é o prazo do financiamento, "Custo corrigido" é tudo que sai do bolso (entrada + todas as parcelas) e "Valor mensal necessário" é a parcela mensal de verdade — calculada pela Tabela Price, no botão "Financiamento" da linha.',
   ]));
-  body.appendChild(el('p', {class:'help'}, ['Taxas de financiamento de referência pesquisadas no mercado em out/2026 (imóvel: Caixa / Minha Casa Minha Vida e SBPE; veículo: Banco Central, média de ago/2026 e médias por banco de set/2026) — a taxa real aprovada depende da sua renda, região, relacionamento bancário e análise de crédito; confirme sempre com o banco antes de decidir.']));
+  body.appendChild(el('p', {class:'help'}, ['Taxas de financiamento de referência pesquisadas no mercado em out/2026 (imóvel: Caixa / Minha Casa Minha Vida e SBPE; veículo: Banco Central, média de ago/2026 e médias por banco de set/2026; crédito pessoal e consignado: Banco Central, ago e out/2026) — a taxa real aprovada depende da sua renda, região, relacionamento bancário e análise de crédito; confirme sempre com o banco antes de decidir.']));
   body.appendChild(el('div', {class:'callout'}, [
     el('b',{},['Esse valor mensal dos sonhos']), ' entra na sugestão do seu pró-labore, na etapa Minha Meta: é o que precisa sobrar, além das suas contas, pra viver a vida que você sonha.',
   ]));
@@ -1350,7 +1401,7 @@ function renderStepMeta(panel){
   const dec = el('div', {class:'cat-group'});
   dec.appendChild(el('div', {class:'cat-title'}, ['O que você decide']));
   const proRow = el('div', {class:'field-row'});
-  proRow.appendChild(el('label', {}, ['Pró-labore (seu salário)', el('div',{class:'help'},['Quanto você quer tirar do negócio por mês. Comece pela sugestão e ajuste.'])]));
+  proRow.appendChild(el('label', {}, ['Pró-labore (seu salário)', el('div',{class:'help'},['Quanto você precisa ter por mês pra viver — somando tudo que entra. Comece pela sugestão e ajuste.'])]));
   const proField = numberInput({value: prolaboreAtual(st), kind:'brl', onInput:(n)=>{ st.meta.prolabore = n; refresh(); persist(); }});
   proField.querySelector('input').id = 'meta-prolabore';
   proRow.appendChild(proField);
@@ -1369,18 +1420,100 @@ function renderStepMeta(panel){
   dec.appendChild(cresRow);
   body.appendChild(dec);
 
+  // ---- Outras fontes de renda ----
+  const rendas = st.rendas;
+  const rendBox = el('div', {class:'cat-group'});
+  rendBox.appendChild(el('div', {class:'cat-title'}, ['Outras fontes de renda']));
+  const chk = el('input', {type:'checkbox', id:'rendas-ativo'});
+  chk.checked = !!rendas.ativo;
+  rendBox.appendChild(el('label', {for:'rendas-ativo', class:'rendas-toggle'}, [chk,
+    el('span', {}, [el('b',{},['Tenho outras rendas além deste negócio']), el('div',{class:'help'},['CLT, outro negócio, investimentos, aluguel… Elas cobrem parte da sua meta, e este negócio só precisa entregar o que falta.'])]),
+  ]));
+  const rendLista = el('div', {class:'rendas-lista'});
+  rendBox.appendChild(rendLista);
+  body.appendChild(rendBox);
+
+  function drawRendas(){
+    rendLista.innerHTML = '';
+    rendLista.style.display = rendas.ativo ? '' : 'none';
+    if (!rendas.ativo) return;
+    rendas.itens.forEach((it, i) => {
+      const row = el('div', {class:'renda-row'});
+      const sel = el('select', {class:'inp'});
+      RENDA_TIPOS.forEach(t => sel.appendChild(el('option', {value:t.key, selected: t.key===it.tipo?'selected':null}, [t.label])));
+      const nome = el('input', {class:'inp text-left', value: it.desc||'', placeholder: it.tipo==='outra' ? 'qual renda?' : 'nome (opcional)'});
+      const help = el('div', {class:'help', style:'grid-column:1 / -1;margin:0;'}, [rendaTipo(it.tipo).help]);
+      sel.addEventListener('change', () => {
+        it.tipo = sel.value; help.textContent = rendaTipo(it.tipo).help;
+        nome.placeholder = it.tipo==='outra' ? 'qual renda?' : 'nome (opcional)';
+        persist();
+      });
+      nome.addEventListener('input', () => { it.desc = nome.value; persist(); });
+      const val = numberInput({value: it.valor||0, kind:'brl', onInput:(n)=>{ it.valor = n; persist(); refresh(); }});
+      const del = el('button', {class:'btn btn-secondary btn-sm', type:'button', title:'Remover', onclick:()=>{ rendas.itens.splice(i,1); persist(); drawRendas(); refresh(); }}, ['✕']);
+      row.appendChild(sel); row.appendChild(nome); row.appendChild(val); row.appendChild(del); row.appendChild(help);
+      rendLista.appendChild(row);
+    });
+    rendLista.appendChild(el('button', {class:'btn btn-secondary btn-sm', type:'button', style:'margin-top:6px;', onclick:()=>{
+      rendas.itens.push({tipo: rendas.itens.length ? 'outra' : 'clt', desc:'', valor:0}); persist(); drawRendas(); refresh();
+    }}, ['+ Adicionar renda']));
+    const tot = el('div', {class:'field-total'});
+    tot.appendChild(el('label', {}, ['Total das outras rendas (por mês)']));
+    tot.appendChild(el('span', {id:'rendas-total', class:'mono', style:'font-weight:700;'}, [fmtBRL(sumOutrasRendas(st))]));
+    rendLista.appendChild(tot);
+  }
+  chk.addEventListener('change', () => {
+    rendas.ativo = chk.checked;
+    if (rendas.ativo && !rendas.itens.length) rendas.itens.push({tipo:'clt', desc:'', valor:0});
+    persist(); drawRendas(); refresh();
+  });
+  drawRendas();
+
+  // ---- Totais ----
+  const totBox = el('div', {class:'cat-group'});
+  const linhaTotal = el('div', {class:'field-row', id:'meta-linha-total'}, [
+    el('label', {}, ['Meta total (pró-labore + crescimento)']),
+    el('span', {id:'meta-total', class:'mono', style:'font-weight:700;text-align:right;'}, ['']),
+  ]);
+  const linhaOutras = el('div', {class:'field-row', id:'meta-linha-outras'}, [
+    el('label', {}, ['− Outras rendas']),
+    el('span', {id:'meta-outras', class:'mono', style:'font-weight:700;text-align:right;'}, ['']),
+  ]);
+  totBox.appendChild(linhaTotal); totBox.appendChild(linhaOutras);
   const totalRow = el('div', {class:'field-total'});
-  totalRow.appendChild(el('label', {style:'font-weight:800;font-size:15px;'}, ['💰 Meta de lucro mensal']));
-  const metaField = numberInput({value: computeMeta(st), kind:'brl', locked:true, result:true});
+  totalRow.appendChild(el('label', {id:'meta-principal-label', style:'font-weight:800;font-size:15px;'}, ['💰 Meta de lucro mensal']));
+  const metaField = numberInput({value: computeMetaNegocio(st), kind:'brl', locked:true, result:true});
   metaField.querySelector('input').id = 'meta-principal';
   metaField.querySelector('input').style.fontSize = '16px';
   totalRow.appendChild(metaField);
-  body.appendChild(totalRow);
-  body.appendChild(el('p', {class:'help'}, ['Calculada automaticamente: pró-labore + crescimento profissional.']));
+  totBox.appendChild(totalRow);
+  totBox.appendChild(el('p', {class:'help', id:'meta-principal-help'}, ['']));
+  totBox.appendChild(el('div', {id:'rendas-aviso', class:'callout', style:'display:none;'}));
+  body.appendChild(totBox);
 
   function refresh(){
     st.meta.valor = computeMeta(st);
-    const x = document.getElementById('meta-principal'); if (x) x.value = fmtNum(st.meta.valor, 2);
+    const outras = sumOutrasRendas(st);
+    const metaNeg = computeMetaNegocio(st);
+    const $ = (id) => document.getElementById(id);
+    const x = $('meta-principal'); if (x) x.value = fmtNum(metaNeg, 2);
+    const temOutras = outras > 0;
+    if ($('meta-linha-total')){
+      $('meta-linha-total').style.display = temOutras ? '' : 'none';
+      $('meta-linha-outras').style.display = temOutras ? '' : 'none';
+      $('meta-total').textContent = fmtBRL(st.meta.valor);
+      $('meta-outras').textContent = '− ' + fmtBRL(outras);
+      $('meta-principal-label').textContent = temOutras ? '💰 Este negócio precisa entregar' : '💰 Meta de lucro mensal';
+      $('meta-principal-help').textContent = temOutras
+        ? 'Meta total menos suas outras rendas. É esse valor que o Precifica usa pra calcular seus preços e conferir se você bate a meta.'
+        : 'Calculada automaticamente: pró-labore + crescimento profissional.';
+      const rt = $('rendas-total'); if (rt) rt.textContent = fmtBRL(outras);
+      const av = $('rendas-aviso');
+      if (temOutras && outras >= st.meta.valor){
+        av.style.display = '';
+        av.innerHTML = '<b>Suas outras rendas já cobrem toda a sua meta.</b> Tudo que este negócio lucrar é extra — dá pra acelerar os sonhos ou investir no crescimento.';
+      } else av.style.display = 'none';
+    }
     const p = prolaboreAtual(st);
     const a = document.getElementById('meta-aviso');
     if (!a) return;
@@ -1394,9 +1527,10 @@ function renderStepMeta(panel){
       a.style.display = 'none';
     }
   }
-  refresh();
   panel.appendChild(body);
   footNav(panel, {});
+  // os elementos precisam estar na página antes do primeiro cálculo
+  requestAnimationFrame(refresh);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -2098,6 +2232,16 @@ function verdictBanner(bate, valorFalta, liquidoLabel){
   ]);
 }
 
+function metaTiles(grid, r){
+  if (r.outrasRendas > 0){
+    grid.appendChild(statTile(null,'🎯 Meta total (tudo que você precisa)', fmtBRL(r.metaTotal)));
+    grid.appendChild(statTile(null,'💼 Outras rendas (CLT, investimentos…)', fmtBRL(r.outrasRendas)));
+    grid.appendChild(statTile(null,'🎯 Meta deste negócio', fmtBRL(r.meta)));
+  } else {
+    grid.appendChild(statTile(null,'🎯 Meta de lucro mensal', fmtBRL(r.meta)));
+  }
+}
+
 function renderStepResumo(panel){
   const model = APP.model;
   const r = computeResumo(model, APP.state);
@@ -2107,7 +2251,7 @@ function renderStepResumo(panel){
   const grid = el('div', {class:'stat-grid'});
 
   if (model === 'prestador'){
-    grid.appendChild(statTile(null,'🎯 Meta de lucro mensal', fmtBRL(r.meta)));
+    metaTiles(grid, r);
     grid.appendChild(statTile(null,'🏠 Custo da vida pessoal', fmtBRL(r.custoVida)));
     grid.appendChild(statTile(null,'🏢 Custo fixo do consultório', fmtBRL(r.custoFixoNegocio)));
     grid.appendChild(statTile(null,'⏱ Horas disponíveis na agenda', fmtNum(r.horasDisponiveis,1)+' h'));
@@ -2117,12 +2261,12 @@ function renderStepResumo(panel){
     grid.appendChild(statTile(null,'📥 Receita bruta projetada', fmtBRL(r.receita)));
     grid.appendChild(statTile(null,'🏆 Líquido que sobra pra você', fmtBRL(r.liquido), 'hi'));
     body.appendChild(grid);
-    body.appendChild(verdictBanner(r.bateMeta, r.diff, 'Líquido após impostos, repasses e custos, comparado com sua meta de lucro.'));
+    body.appendChild(verdictBanner(r.bateMeta, r.diff, 'Líquido após impostos, repasses e custos, comparado com ' + (r.outrasRendas > 0 ? 'o que este negócio precisa entregar (meta total menos suas outras rendas).' : 'sua meta de lucro.')));
     body.appendChild(el('div', {class:'callout'}, ['Cada horário vago na sua agenda é dinheiro que você já gastou e não vai receber de volta. Preço justo protege sua saúde financeira — e é o primeiro passo pra cuidar bem dos seus pacientes.']));
   }
 
   if (model === 'produto'){
-    grid.appendChild(statTile(null,'🎯 Meta de lucro mensal', fmtBRL(r.meta)));
+    metaTiles(grid, r);
     grid.appendChild(statTile(null,'🏠 Custo da vida pessoal', fmtBRL(r.custoVida)));
     grid.appendChild(statTile(null,'🏢 Custo fixo mensal da empresa', fmtBRL(r.custoFixoEmpresa)));
     grid.appendChild(statTile(null,'⏱ Custo/hora da empresa', fmtBRL(r.custoHoraEmpresa)));
@@ -2131,12 +2275,12 @@ function renderStepResumo(panel){
     grid.appendChild(statTile(null,'📥 Receita projetada', fmtBRL(r.receita)));
     grid.appendChild(statTile(null,'🏆 Lucro líquido projetado', fmtBRL(r.liquido), 'hi'));
     body.appendChild(grid);
-    body.appendChild(verdictBanner(r.bateMeta, r.diff, 'Lucro líquido (soma das margens de cada produto), comparado com sua meta de lucro.'));
+    body.appendChild(verdictBanner(r.bateMeta, r.diff, 'Lucro líquido (soma das margens de cada produto), comparado com ' + (r.outrasRendas > 0 ? 'o que este negócio precisa entregar (meta total menos suas outras rendas).' : 'sua meta de lucro.')));
     body.appendChild(el('div', {class:'callout'}, ['O cliente não te paga pelo que você faz. Ele te paga pelo valor que entrega a ele. Sua planilha garante só uma coisa: que esse pagamento também PAGA a sua vida e o seu negócio.']));
   }
 
   if (model === 'conhecimento'){
-    grid.appendChild(statTile(null,'🎯 Meta de lucro mensal', fmtBRL(r.meta)));
+    metaTiles(grid, r);
     grid.appendChild(statTile(null,'🏠 Custo da vida pessoal', fmtBRL(r.custoVida)));
     grid.appendChild(statTile(null,'🏢 Custo fixo do negócio', fmtBRL(r.custoFixoNegocio)));
     grid.appendChild(statTile(null,'⏱ Horas produtivas no mês', fmtNum(r.horasProdutivasMes,1)+' h'));
@@ -2146,7 +2290,7 @@ function renderStepResumo(panel){
     grid.appendChild(statTile(null,'📥 Receita projetada', fmtBRL(r.receita)));
     grid.appendChild(statTile(null,'🏆 Lucro líquido projetado', fmtBRL(r.liquido), 'hi'));
     body.appendChild(grid);
-    body.appendChild(verdictBanner(r.bateMeta, r.diff, 'Lucro líquido (soma das margens de cada oferta), comparado com sua meta de lucro.'));
+    body.appendChild(verdictBanner(r.bateMeta, r.diff, 'Lucro líquido (soma das margens de cada oferta), comparado com ' + (r.outrasRendas > 0 ? 'o que este negócio precisa entregar (meta total menos suas outras rendas).' : 'sua meta de lucro.')));
     const capMsgs = {
       over: '🔴 Atenção: as horas comprometidas ULTRAPASSAM sua capacidade mensal. Revise a agenda ou contrate ajuda.',
       alerta: '🟡 Alerta: você está usando mais de 90% da sua capacidade. Pouco espaço pra crescer sem contratar.',
