@@ -628,17 +628,23 @@ function computeCalcPrestador(rows, horaC){
     const H = parseBR(row.impostos), I = parseBR(row.repasse), J = parseBR(row.comissao), K = parseBR(row.cartao), L = parseBR(row.margem);
     const F = C * custoHora;
     const G = D + E + F;
+    // Imposto, repasse, comissão, cartão e margem são todos PEDAÇOS do preço:
+    // juntos precisam somar menos de 100%, senão não existe preço possível.
     const denomM = 1 - H - J - K - L;
-    const M = B === 0 ? 0 : (denomM <= 0 ? 0 : G / denomM);
     const denomN = 1 - H - I - J - K - L;
-    const N = B === 0 ? 0 : (I === 0 ? 0 : (denomN <= 0 ? 0 : G / denomN));
-    const O = B === 0 ? 0 : (I > 0 ? N*(1-H-I-J-K) - G : M*(1-H-J-K) - G);
+    const invalido = denomM <= 0 || (I > 0 && denomN <= 0);
+    // O preço por atendimento não depende de quantos atendimentos há no mês.
+    const M = denomM <= 0 ? 0 : G / denomM;
+    const N = I === 0 ? 0 : (denomN <= 0 ? 0 : G / denomN);
+    const O = invalido ? 0 : (I > 0 ? N*(1-H-I-J-K) - G : M*(1-H-J-K) - G);
     const P = B * C;
-    const Q = B === 0 ? 0 : (I > 0 ? N*B : M*B);
+    const Q = B === 0 || invalido ? 0 : (I > 0 ? N*B : M*B);
     const liqHora = safeDiv(O, C);
     let status = '';
-    if (B !== 0) status = liqHora >= custoHora*2 ? 'otimo' : (liqHora >= custoHora ? 'ok' : 'baixo');
-    return Object.assign({}, row, {_custoTempo:F, _custoDireto:G, _precoParticular:M, _precoConvenio:N, _liquido:O, _horasTotais:P, _receita:Q, _status:status});
+    if (invalido) status = 'invalido';
+    else if (B !== 0) status = liqHora >= custoHora*2 ? 'otimo' : (liqHora >= custoHora ? 'ok' : 'baixo');
+    return Object.assign({}, row, {_custoTempo:F, _custoDireto:G, _precoParticular:M, _precoConvenio:N, _liquido:O, _horasTotais:P, _receita:Q, _status:status,
+      _somaPct: H + J + K + L + (I > 0 ? I : 0)});
   });
   const totals = {
     atendimentos: out.reduce((s,r)=>s+parseBR(r.atend),0),
@@ -2049,7 +2055,7 @@ function openMoradiaPopover(anchorEl, r, onApply){
 /* ---------------------------------------------------------------------- */
 
 function statusPillNode(status){
-  const map = {otimo:['status-otimo','🟢 Ótimo'], ok:['status-ok','🟡 OK'], baixo:['status-baixo','🔴 Baixo'], gravado:['status-grav','📼 Gravado'], '':[null,'']};
+  const map = {otimo:['status-otimo','🟢 Ótimo'], ok:['status-ok','🟡 OK'], baixo:['status-baixo','🔴 Baixo'], invalido:['status-baixo','⚠️ % acima de 100'], gravado:['status-grav','📼 Gravado'], '':[null,'']};
   const [cls, txt] = map[status] || map[''];
   if (!cls) return el('span');
   return el('span', {class:'status-pill '+cls}, [txt]);
@@ -2105,6 +2111,7 @@ const SERVICOS_PRONTOS = [
 ];
 
 function statusFrase(status){
+  if (status === 'invalido') return '⚠️ Não dá pra calcular: as porcentagens passam de 100% (veja abaixo).';
   if (status === 'otimo') return '🟢 Ótimo: sobra bem mais que o custo da sua hora.';
   if (status === 'ok') return '🟡 OK: paga o seu tempo, mas sobra pouco.';
   if (status === 'baixo') return '🔴 Prejuízo: com esse preço, este atendimento não paga nem o seu tempo.';
@@ -2131,7 +2138,9 @@ function buildCalcPrestador(wrap, body){
   gRow('Imposto', 'Simples Nacional, ISS, carnê-leão… em % do que você recebe.', 'impostos');
   gRow('Taxa da maquininha / cartão', 'Média do que a maquininha desconta.', 'cartao');
   gRow('Comissão', 'Se você paga comissão a alguém por atendimento. Senão, deixe 0.', 'comissao');
-  gRow('Margem de lucro desejada', 'Quanto do preço você quer que vire lucro. 30% a 50% é comum.', 'margem');
+  gRow('Margem de lucro desejada', 'Quanto DO PREÇO vira lucro (não é "% a mais sobre o custo"). Ex.: margem de 30% num serviço de R$ 100 = R$ 30 de lucro. 20% a 40% é comum.', 'margem');
+  gbox.appendChild(el('div', {id:'svc-global-aviso', class:'svc-diff', style:'display:none;'}));
+  gbox.appendChild(el('div', {id:'svc-global-max', class:'help'}, ['']));
   const convChk = el('input', {type:'checkbox', id:'svc-convenio'});
   convChk.checked = !!g.convenio;
   convChk.addEventListener('change', () => { g.convenio = convChk.checked; persist(); rebuild(); });
@@ -2291,10 +2300,21 @@ function buildCalcPrestador(wrap, body){
     const horaC = computeHora('prestador', st);
     let perda = 0;
     rows.forEach((c, i) => {
-      setTxt('svc-preco-'+i, fmtBRL(c._precoParticular));
+      const inval = c._status === 'invalido';
+      setTxt('svc-preco-'+i, inval ? '—' : fmtBRL(c._precoParticular));
+      if (inval){
+        const d0 = $('svc-diff-'+i);
+        if (d0){
+          d0.style.display = ''; d0.className = 'svc-diff falta';
+          const ef = c;
+          d0.innerHTML = '<b>Imposto ' + fmtNum(parseBR(ef.impostos)*100,1) + '% + cartão ' + fmtNum(parseBR(ef.cartao)*100,1) + '% + comissão ' + fmtNum(parseBR(ef.comissao)*100,1) + '%'
+            + (parseBR(ef.repasse) > 0 ? ' + repasse ' + fmtNum(parseBR(ef.repasse)*100,1) + '%' : '')
+            + ' + margem ' + fmtNum(parseBR(ef.margem)*100,1) + '% = ' + fmtNum(c._somaPct*100,1) + '%.</b> Tudo isso sai de dentro do preço, então precisa somar menos de 100%. Diminua a margem.';
+        }
+      }
       const cl = $('svc-convline-'+i);
       if (cl) cl.textContent = parseBR(c.repasse) > 0 ? 'Preço pra convênio: ' + fmtBRL(c._precoConvenio) : 'Serviço particular (sem repasse de convênio).';
-      setTxt('svc-liq-'+i, fmtBRL(c._liquido));
+      setTxt('svc-liq-'+i, inval ? '—' : fmtBRL(c._liquido));
       setTxt('svc-status-'+i, statusFrase(c._status));
       const se = $('svc-status-'+i); if (se) se.className = 'svc-status st-' + (c._status||'none');
       setTxt('svc-mat-'+i, fmtBRL(parseBR(c.insumos)));
@@ -2304,7 +2324,7 @@ function buildCalcPrestador(wrap, body){
       setTxt('svc-receita-'+i, fmtBRL(c._receita));
       const d = $('svc-diff-'+i);
       const hoje = parseBR(c.cobraHoje);
-      if (d){
+      if (d && !inval){
         if (hoje > 0 && c._precoParticular > 0){
           const dif = c._precoParticular - hoje;
           d.style.display = '';
@@ -2319,6 +2339,16 @@ function buildCalcPrestador(wrap, body){
         } else d.style.display = 'none';
       }
     });
+    const somaG = parseBR(g.impostos) + parseBR(g.cartao) + parseBR(g.comissao);
+    const maxMargem = Math.max(0, 1 - somaG);
+    setTxt('svc-global-max', 'Com esse imposto, cartão e comissão, a margem máxima possível é ' + fmtNum(maxMargem*100, 0) + '% — e o ideal é ficar bem abaixo disso.');
+    const ga = $('svc-global-aviso');
+    if (ga){
+      if (somaG + parseBR(g.margem) >= 1){
+        ga.style.display = ''; ga.className = 'svc-diff falta';
+        ga.innerHTML = '<b>Imposto + cartão + comissão + margem = ' + fmtNum((somaG + parseBR(g.margem))*100, 1) + '%.</b> Precisa ficar abaixo de 100%, senão não existe preço possível. Diminua a margem para menos de ' + fmtNum(maxMargem*100, 0) + '%.';
+      } else ga.style.display = 'none';
+    }
     setTxt('svc-tot-atend', fmtNum(totals.atendimentos, 0));
     setTxt('svc-tot-horas', fmtNum(totals.horas, 1) + ' h de ' + fmtNum(horaC.horasDisponiveis || 0, 0) + ' h disponíveis');
     setTxt('svc-tot-receita', fmtBRL(totals.receita));
