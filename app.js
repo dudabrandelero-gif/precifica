@@ -2,22 +2,11 @@
    Firebase — init e helpers de autenticação/dados
    ============================================================================ */
 
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
-import {
-  getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword,
-  signOut, updateProfile, sendPasswordResetEmail,
-} from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
-import {
-  getFirestore, doc, getDoc, setDoc, updateDoc, serverTimestamp,
-  collection, getDocs, query, orderBy, limit,
-} from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
-import { firebaseConfig } from "./firebase-config.js";
-
-const fbApp = initializeApp(firebaseConfig);
-const auth = getAuth(fbApp);
-const dbfs = getFirestore(fbApp);
-
-const FS = { doc, getDoc, setDoc, updateDoc, serverTimestamp, collection, getDocs, query, orderBy, limit };
+// Sem login: o Precifica abre direto e guarda os dados NESTE navegador (localStorage).
+// Pra levar os dados pra outro aparelho, use "Baixar backup" / "Carregar backup" no menu.
+const STORE_PREFIX = 'precifica:';
+function lsGet(key){ try{ const v = localStorage.getItem(STORE_PREFIX + key); return v ? JSON.parse(v) : null; }catch(e){ return null; } }
+function lsSet(key, val){ localStorage.setItem(STORE_PREFIX + key, JSON.stringify(val)); }
 
 function authErrorPt(err){
   const code = (err && err.code) || '';
@@ -421,7 +410,9 @@ function defaultState(modelKey){
   };
   if (modelKey === 'prestador'){
     st.calcGlobal = deriveCalcGlobal(calcular);
-    calcular.forEach(r => { r.matModo = 'valor'; r.materiais = []; });
+    st.materialMensal = 0;
+    st.materialMeses = [0,0,0];
+    calcular.forEach(r => { r.matModo = 'auto'; });
   }
   return st;
 }
@@ -458,7 +449,13 @@ function mergeWithDefaults(modelKey, parsed){
   if (modelKey === 'prestador'){
     if (!parsed.calcGlobal) merged.calcGlobal = deriveCalcGlobal(merged.calcular);
     else merged.calcGlobal = Object.assign({}, CALC_GLOBAL_DEFAULT, parsed.calcGlobal);
-    (merged.calcular || []).forEach(r => { if (!r.matModo) r.matModo = 'valor'; if (!Array.isArray(r.materiais)) r.materiais = []; });
+    if (merged.materialMensal == null) merged.materialMensal = 0;
+    if (!Array.isArray(merged.materialMeses)) merged.materialMeses = [0,0,0];
+    // Material passou a ser automático (pelo tempo). Mantém "valor próprio" só onde o aluno digitou um valor.
+    (merged.calcular || []).forEach(r => {
+      if (r.matModo === 'lista' || r._example) r.matModo = 'auto';
+      else if (!r.matModo) r.matModo = parseBR(r.insumos) > 0 ? 'valor' : 'auto';
+    });
   }
   merged.hora = Object.assign({}, def.hora, merged.hora);
   const savedMeta = parsed.meta || {};
@@ -479,7 +476,7 @@ function mergeWithDefaults(modelKey, parsed){
 // above are pure and reused there.
 function markSaved(){
   const ind = document.getElementById('save-indicator');
-  if (ind){ ind.classList.remove('err'); ind.classList.add('flash'); ind.querySelector('.txt').textContent = 'salvo na sua conta'; }
+  if (ind){ ind.classList.remove('err'); ind.classList.add('flash'); ind.querySelector('.txt').textContent = 'salvo neste aparelho'; }
 }
 function markSaving(){
   const ind = document.getElementById('save-indicator');
@@ -487,7 +484,7 @@ function markSaving(){
 }
 function markSaveError(){
   const ind = document.getElementById('save-indicator');
-  if (ind){ ind.classList.add('err'); ind.querySelector('.txt').textContent = 'não deu pra salvar — verifique a internet'; }
+  if (ind){ ind.classList.add('err'); ind.querySelector('.txt').textContent = 'não deu pra salvar neste navegador'; }
 }
 
 /* ---------------------------------------------------------------------- */
@@ -588,10 +585,13 @@ function computeHora(modelKey, state){
 // Configurações que valem para todos os serviços (Prestador).
 const CALC_GLOBAL_DEFAULT = {impostos:.06, cartao:.03, comissao:0, margem:.4, convenio:false};
 function calcGlobal(state){ return Object.assign({}, CALC_GLOBAL_DEFAULT, (state && state.calcGlobal) || {}); }
-function insumoCustoUn(ins){ return safeDiv(parseBR(ins.valor), parseBR(ins.qtd)); }
-function materiaisCusto(state, row){
-  const map = {}; ((state && state.insumos) || []).forEach(ins => { map[ins.id] = ins; });
-  return (row.materiais || []).reduce((s, m) => s + (map[m.id] ? parseBR(m.qtd) * insumoCustoUn(map[m.id]) : 0), 0);
+// Material (Prestador): em vez de contar item por item, usa o GASTO MENSAL da clínica
+// com materiais, dividido pelas horas realmente atendidas no mês (Minha Hora).
+// Cada serviço recebe material proporcional ao tempo que leva.
+function taxaMaterialHora(state){
+  if (!state) return 0;
+  const horaC = computeHora('prestador', state);
+  return safeDiv(parseBR(state.materialMensal), horaC.horasEfetivas);
 }
 // Valores que realmente entram no cálculo de um serviço.
 function prestadorEfetivo(row, state){
@@ -600,7 +600,7 @@ function prestadorEfetivo(row, state){
   const r = Object.assign({}, row);
   if (r.usaPadrao !== false){ r.impostos = g.impostos; r.cartao = g.cartao; r.comissao = g.comissao; r.margem = g.margem; }
   if (!g.convenio) r.repasse = 0;
-  if (r.matModo === 'lista') r.insumos = materiaisCusto(state, row);
+  if (r.matModo !== 'valor') r.insumos = taxaMaterialHora(state) * parseBR(r.dur);
   return r;
 }
 // Gera as configurações gerais a partir de serviços já salvos (migração / exemplos).
@@ -800,28 +800,19 @@ const APP = {
 };
 let CURRENT_USER = null; // {uid, email, nome}
 
-/* ---------- Firestore: load/save do modelo ativo ---------- */
+/* ---------- Load/save no navegador ---------- */
 
 async function loadState(modelKey){
-  try{
-    const ref = FS.doc(dbfs, 'users', CURRENT_USER.uid, 'modelos', modelKey);
-    const snap = await FS.getDoc(ref);
-    return mergeWithDefaults(modelKey, snap.exists() ? snap.data() : null);
-  }catch(e){
-    console.warn('load failed', e);
-    return defaultState(modelKey);
-  }
+  return mergeWithDefaults(modelKey, lsGet('modelo:' + modelKey));
 }
 
 let SAVE_TIMER = null;
 async function saveState(modelKey, state){
-  if (!CURRENT_USER) return;
   markSaving();
   try{
     const clean = JSON.parse(JSON.stringify(state));
-    const ref = FS.doc(dbfs, 'users', CURRENT_USER.uid, 'modelos', modelKey);
-    await FS.setDoc(ref, clean);
-    await saveResumo(modelKey, clean);
+    lsSet('modelo:' + modelKey, clean);
+    saveResumo(modelKey, clean);
     markSaved();
   }catch(e){
     console.warn('save failed', e);
@@ -830,73 +821,58 @@ async function saveState(modelKey, state){
 }
 function scheduleSave(modelKey, state){
   clearTimeout(SAVE_TIMER);
-  SAVE_TIMER = setTimeout(() => { saveState(modelKey, state); }, 700);
+  SAVE_TIMER = setTimeout(() => { saveState(modelKey, state); }, 500);
 }
-async function saveResumo(modelKey, state){
+function saveResumo(modelKey, state){
   const r = computeResumo(modelKey, state);
-  const ref = FS.doc(dbfs, 'resumos', CURRENT_USER.uid);
-  await FS.setDoc(ref, {
-    nome: CURRENT_USER.nome || '',
-    email: CURRENT_USER.email || '',
-    [modelKey]: {
-      meta: r.meta, receita: r.receita, liquido: r.liquido, bateMeta: r.bateMeta,
-      atualizadoEm: FS.serverTimestamp(),
-    },
-  }, { merge: true });
+  const all = lsGet('resumos') || {};
+  all[modelKey] = { meta: r.meta, receita: r.receita, liquido: r.liquido, bateMeta: r.bateMeta, atualizadoEm: new Date().toISOString() };
+  lsSet('resumos', all);
 }
 function persist(){ scheduleSave(APP.model, APP.state); }
 
-/* ---------- Sessão ---------- */
+/* ---------- Início (sem login) ---------- */
 
-function initAuthListener(){
-  onAuthStateChanged(auth, async (fbUser) => {
-    if (!fbUser){
-      CURRENT_USER = null;
-      APP.view = 'login';
-      APP.model = null; APP.state = null;
-      render();
-      return;
-    }
-    // Evita uma corrida: logo após o cadastro, o próprio formulário de
-    // cadastro já monta o CURRENT_USER e chama render() antes que este
-    // listener dispare de novo pra mesma conta. Sem essa guarda, este trecho
-    // releria o perfil no Firestore — que às vezes ainda não terminou de ser
-    // gravado — e sobrescreveria um CURRENT_USER que já estava correto.
-    if (CURRENT_USER && CURRENT_USER.uid === fbUser.uid) return;
-    try{
-      const ref = FS.doc(dbfs, 'users', fbUser.uid);
-      const snap = await FS.getDoc(ref);
-      const data = snap.exists() ? snap.data() : {};
-      CURRENT_USER = {
-        uid: fbUser.uid,
-        email: fbUser.email || data.email || '',
-        nome: data.nome || fbUser.displayName || (fbUser.email||'').split('@')[0],
-      };
-    }catch(e){
-      console.warn('perfil load failed', e);
-      CURRENT_USER = { uid: fbUser.uid, email: fbUser.email||'', nome: fbUser.displayName||'' };
-    }
-    APP.view = 'menu';
-    APP.menuResumo = null;
-    render();
-    loadMenuResumo();
-  });
+function initApp(){
+  CURRENT_USER = { uid: 'local', email: '', nome: '' };
+  APP.view = 'menu';
+  render();
+  loadMenuResumo();
 }
 
 async function loadMenuResumo(){
-  try{
-    const ref = FS.doc(dbfs, 'resumos', CURRENT_USER.uid);
-    const snap = await FS.getDoc(ref);
-    APP.menuResumo = snap.exists() ? snap.data() : {};
-  }catch(e){
-    console.warn('resumo load failed', e);
-    APP.menuResumo = {};
-  }
+  APP.menuResumo = lsGet('resumos') || {};
   if (APP.view === 'menu') render();
 }
 
-async function doLogout(){
-  try{ await signOut(auth); }catch(e){ console.warn(e); }
+/* ---------- Backup (levar os dados pra outro aparelho) ---------- */
+
+function baixarBackup(){
+  const dados = { app:'precifica', versao:1, geradoEm:new Date().toISOString(), modelos:{}, resumos: lsGet('resumos') || {} };
+  Object.keys(MODELS).forEach(k => { const v = lsGet('modelo:' + k); if (v) dados.modelos[k] = v; });
+  const blob = new Blob([JSON.stringify(dados, null, 1)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'precifica-backup-' + new Date().toISOString().slice(0,10) + '.json';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+function carregarBackup(){
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = '.json,application/json';
+  inp.addEventListener('change', async () => {
+    const f = inp.files && inp.files[0]; if (!f) return;
+    try{
+      const dados = JSON.parse(await f.text());
+      if (!dados || dados.app !== 'precifica' || !dados.modelos) throw new Error('arquivo inválido');
+      if (!confirm('Carregar este backup? Os dados preenchidos neste aparelho serão substituídos pelos do arquivo.')) return;
+      Object.keys(dados.modelos).forEach(k => { if (MODELS[k]) lsSet('modelo:' + k, dados.modelos[k]); });
+      lsSet('resumos', dados.resumos || {});
+      loadMenuResumo();
+      alert('Backup carregado.');
+    }catch(e){ alert('Não consegui ler esse arquivo. Escolha um backup baixado pelo próprio Precifica.'); }
+  });
+  inp.click();
 }
 
 /* ---------- Navegação dentro do app ---------- */
@@ -925,7 +901,7 @@ function goStep(stepKey){
   window.scrollTo(0,0);
 }
 function resetModelData(){
-  if (!confirm('Isso vai apagar todos os dados preenchidos neste modelo (na sua conta) e voltar aos exemplos. Quer continuar?')) return;
+  if (!confirm('Isso vai apagar todos os dados preenchidos neste modelo (neste aparelho) e voltar aos exemplos. Quer continuar?')) return;
   const fresh = defaultState(APP.model);
   APP.state = fresh;
   saveState(APP.model, fresh);
@@ -940,8 +916,6 @@ function render(){
   const root = document.getElementById('app');
   root.innerHTML = '';
   if (APP.view === 'loading'){ root.appendChild(renderLoading()); return; }
-  if (APP.view === 'login'){ root.appendChild(renderAuth('login')); return; }
-  if (APP.view === 'signup'){ root.appendChild(renderAuth('signup')); return; }
   if (APP.view === 'menu'){ root.appendChild(renderTopbar()); root.appendChild(renderMenu()); return; }
   if (APP.view === 'wizard'){
     root.appendChild(renderTopbar());
@@ -963,100 +937,6 @@ function renderLoading(){
 /* Login / Cadastro                                                        */
 /* ---------------------------------------------------------------------- */
 
-function renderAuth(mode){
-  const wrap = el('div', {class:'auth-shell'});
-  const card = el('div', {class:'auth-card'});
-  card.appendChild(el('div', {class:'auth-brand'}, ['Precifica', el('span',{class:'sub'},['método 4C'])]));
-
-  if (mode === 'login'){
-    card.appendChild(el('h2', {class:'disp'}, ['Entrar na sua conta']));
-    card.appendChild(el('p', {class:'sub'}, ['Acesse pra continuar de onde parou — seus dados ficam salvos durante toda a mentoria.']));
-    if (APP.authMsg) card.appendChild(el('div', {class:'auth-error'}, [APP.authMsg]));
-
-    const emailInp = el('input', {type:'email', autocomplete:'email', placeholder:'voce@email.com'});
-    const senhaInp = el('input', {type:'password', autocomplete:'current-password', placeholder:'••••••••'});
-    card.appendChild(el('div', {class:'auth-field'}, [el('label',{},['E-mail']), emailInp]));
-    card.appendChild(el('div', {class:'auth-field'}, [el('label',{},['Senha']), senhaInp]));
-    card.appendChild(el('div', {class:'auth-forgot'}, [
-      el('button', {onclick: async () => {
-        const email = emailInp.value.trim();
-        if (!email){ APP.authMsg = 'Digite seu e-mail acima e clique de novo pra receber o link de redefinição.'; render(); return; }
-        try{ await sendPasswordResetEmail(auth, email); APP.authMsg = ''; alert('Enviamos um e-mail com o link pra redefinir sua senha.'); }
-        catch(e){ APP.authMsg = authErrorPt(e); render(); }
-      }}, ['Esqueci minha senha']),
-    ]));
-    const submit = el('button', {class:'btn btn-primary auth-submit', onclick: async () => {
-      submit.disabled = true;
-      try{
-        await signInWithEmailAndPassword(auth, emailInp.value.trim(), senhaInp.value);
-        APP.authMsg = '';
-      }catch(e){
-        APP.authMsg = authErrorPt(e);
-        submit.disabled = false;
-        render();
-      }
-    }}, ['Entrar']);
-    card.appendChild(submit);
-    card.appendChild(el('div', {class:'auth-switch'}, [
-      'Ainda não tem conta? ',
-      el('button', {onclick: () => { APP.view='signup'; APP.authMsg=''; render(); }}, ['Cadastre-se']),
-    ]));
-    [emailInp, senhaInp].forEach(i => i.addEventListener('keydown', (e) => { if (e.key==='Enter') submit.click(); }));
-  }
-
-  if (mode === 'signup'){
-    card.appendChild(el('h2', {class:'disp'}, ['Criar sua conta']));
-    card.appendChild(el('p', {class:'sub'}, ['Leva menos de um minuto. Seus dados ficam salvos e acessíveis durante todo o período da mentoria.']));
-    if (APP.authMsg) card.appendChild(el('div', {class:'auth-error'}, [APP.authMsg]));
-
-    const nomeInp = el('input', {type:'text', autocomplete:'name', placeholder:'Seu nome'});
-    const emailInp = el('input', {type:'email', autocomplete:'email', placeholder:'voce@email.com'});
-    const senhaInp = el('input', {type:'password', autocomplete:'new-password', placeholder:'mínimo 6 caracteres'});
-    const senha2Inp = el('input', {type:'password', autocomplete:'new-password', placeholder:'digite de novo'});
-    card.appendChild(el('div', {class:'auth-field'}, [el('label',{},['Nome']), nomeInp]));
-    card.appendChild(el('div', {class:'auth-field'}, [el('label',{},['E-mail']), emailInp]));
-    card.appendChild(el('div', {class:'auth-field'}, [el('label',{},['Senha']), senhaInp]));
-    card.appendChild(el('div', {class:'auth-field'}, [el('label',{},['Confirmar senha']), senha2Inp]));
-    const submit = el('button', {class:'btn btn-primary auth-submit', onclick: async () => {
-      if (!nomeInp.value.trim()){ APP.authMsg='Digite seu nome.'; render(); return; }
-      if (senhaInp.value !== senha2Inp.value){ APP.authMsg='As senhas não são iguais.'; render(); return; }
-      submit.disabled = true;
-      try{
-        const cred = await createUserWithEmailAndPassword(auth, emailInp.value.trim(), senhaInp.value);
-        await updateProfile(cred.user, {displayName: nomeInp.value.trim()});
-        await FS.setDoc(FS.doc(dbfs, 'users', cred.user.uid), {
-          nome: nomeInp.value.trim(), email: emailInp.value.trim(), criadoEm: FS.serverTimestamp(),
-        });
-        await FS.setDoc(FS.doc(dbfs, 'resumos', cred.user.uid), {
-          nome: nomeInp.value.trim(), email: emailInp.value.trim(),
-        }, {merge:true});
-        APP.authMsg = '';
-        // Monta o usuário atual diretamente com os dados que acabamos de gravar,
-        // em vez de esperar o listener de autenticação reler o Firestore — essa
-        // releitura pode disparar antes da gravação acima terminar (ver nota em
-        // initAuthListener).
-        CURRENT_USER = { uid: cred.user.uid, email: emailInp.value.trim(), nome: nomeInp.value.trim() };
-        APP.view = 'menu';
-        APP.menuResumo = null;
-        render();
-        loadMenuResumo();
-      }catch(e){
-        APP.authMsg = authErrorPt(e);
-        submit.disabled = false;
-        render();
-      }
-    }}, ['Criar conta']);
-    card.appendChild(submit);
-    card.appendChild(el('div', {class:'auth-switch'}, [
-      'Já tem conta? ',
-      el('button', {onclick: () => { APP.view='login'; APP.authMsg=''; render(); }}, ['Entrar']),
-    ]));
-  }
-
-  wrap.appendChild(card);
-  return wrap;
-}
-
 /* ---------------------------------------------------------------------- */
 /* Topbar                                                                  */
 /* ---------------------------------------------------------------------- */
@@ -1070,15 +950,11 @@ function renderTopbar(){
   }
   bar.appendChild(el('div', {class:'topbar-spacer'}));
   if (APP.view === 'wizard'){
-    const ind = el('span', {class:'save-indicator', id:'save-indicator'}, [el('span',{class:'dot'}), el('span',{class:'txt'},['salvo na sua conta'])]);
+    const ind = el('span', {class:'save-indicator', id:'save-indicator'}, [el('span',{class:'dot'}), el('span',{class:'txt'},['salvo neste aparelho'])]);
     bar.appendChild(ind);
     bar.appendChild(el('button', {class:'btn-ghost', onclick: goHome}, ['☰ Menu principal']));
     bar.appendChild(el('button', {class:'btn-ghost', onclick: resetModelData}, ['Limpar dados']));
   }
-  if (APP.view === 'menu'){
-    if (CURRENT_USER) bar.appendChild(el('span', {style:'font-size:13px;color:var(--ink-soft);'}, ['Olá, ', el('b',{style:'color:var(--ink);'},[CURRENT_USER.nome])]));
-  }
-  if (CURRENT_USER) bar.appendChild(el('button', {class:'btn-ghost', onclick: doLogout}, ['Sair']));
   return bar;
 }
 
@@ -1099,11 +975,13 @@ function renderMenu(){
   wrap.appendChild(el('div', {class:'home-hero'}, [
     el('div', {class:'eyebrow'}, ['PRECIFICA · Método 4C']),
     el('h1', {class:'disp'}, ['Descubra o preço certo do seu trabalho.']),
-    el('p', {}, ['Escolha um modelo pra continuar (ou começar). Seus dados ficam salvos na sua conta — você pode entrar de qualquer aparelho durante toda a mentoria.']),
+    el('p', {}, ['Escolha um modelo pra continuar (ou começar). O que você preencher fica salvo neste aparelho, sem precisar de login.']),
   ]));
 
   const userbar = el('div', {class:'menu-userbar'});
-  userbar.appendChild(el('span', {class:'who'}, ['Conta: ', el('b',{},[CURRENT_USER.email])]));
+  userbar.appendChild(el('span', {class:'who'}, ['Vai usar em outro computador ou celular? ']));
+  userbar.appendChild(el('button', {class:'btn-ghost', onclick: baixarBackup}, ['⬇ Baixar backup']));
+  userbar.appendChild(el('button', {class:'btn-ghost', onclick: carregarBackup}, ['⬆ Carregar backup']));
   wrap.appendChild(userbar);
 
   const grid = el('div', {class:'model-grid'});
@@ -1131,9 +1009,9 @@ function renderMenu(){
   wrap.appendChild(grid);
 
   wrap.appendChild(el('ul', {class:'note-list', style:'margin-top:34px;max-width:560px;'}, [
-    el('li', {}, ['Seus dados ficam salvos na sua conta — dá pra continuar de qualquer computador ou celular.']),
+    el('li', {}, ['Seus dados ficam salvos neste navegador. Pra continuar em outro aparelho, baixe o backup aqui e carregue lá.']),
     el('li', {}, ['Pode preencher mais de um modelo — cada um guarda os dados separadamente.']),
-    el('li', {}, ['Só você tem acesso ao que preenche.']),
+    el('li', {}, ['Nada é enviado pra internet: só quem usa este navegador vê o que foi preenchido. Se limpar o histórico/dados do navegador, os dados somem — guarde um backup.']),
   ]));
   return wrap;
 }
@@ -1649,94 +1527,96 @@ function renderStepMeta(panel){
 /* Etapa: Insumos / Matéria-Prima                                          */
 /* ---------------------------------------------------------------------- */
 
-// Materiais odontológicos comuns, pra marcar em vez de digitar. Só nome e quantidade
-// típica da embalagem — o PREÇO o aluno preenche com o que ele paga.
-const MATERIAIS_ODONTO = [
-  ['Luvas de procedimento (caixa)', 100], ['Máscara descartável (caixa)', 50], ['Gorro / touca (pacote)', 100],
-  ['Avental descartável (pacote)', 10], ['Babador / guardanapo descartável (pacote)', 100], ['Sugador descartável (pacote)', 40],
-  ['Copo descartável (pacote)', 100], ['Rolete de algodão (pacote)', 100], ['Anestésico (caixa de tubetes)', 50],
-  ['Agulha gengival (caixa)', 100], ['Resina composta (seringa)', 1], ['Ácido fosfórico (seringa)', 1],
-  ['Sistema adesivo (frasco)', 1], ['Pasta profilática (pote)', 1], ['Flúor gel (frasco)', 1],
-  ['Envelope para esterilização (caixa)', 200], ['Filme PVC / barreira (rolo)', 1], ['Fio de sutura (caixa)', 24],
-  ['Broca (unidade)', 1], ['Escova de Robinson (unidade)', 1],
-];
+// Itens de Meu Negócio que podem ser material clínico (pra avisar sobre conta em dobro).
+const NEGOCIO_ITENS_MATERIAL = ['EPIs da equipe', 'Reposição de itens clínicos gerais', 'Descartáveis gerais (papel toalha, álcool)'];
 
 function renderStepInsumosPrestador(panel){
-  const m = MODELS[APP.model];
   const st = APP.state;
+  if (!Array.isArray(st.materialMeses)) st.materialMeses = [0,0,0];
   panelHead(panel, '5º passo — Conhecer', 'Insumos',
-    'Os materiais que você usa nos atendimentos. Preencha só três coisas: o nome, quanto pagou e quantas unidades vêm. O custo de cada unidade sai sozinho.');
+    'Não precisa contar luva por luva. Basta saber quanto a clínica gasta por mês com materiais — o Precifica distribui esse valor entre os serviços, conforme o tempo de cada um.');
   const body = el('div', {class:'panel-body'});
-  const list = el('div', {class:'ins-list'});
-  body.appendChild(list);
-  const usoCount = (id) => (st.calcular||[]).filter(r => r.matModo === 'lista' && (r.materiais||[]).some(x => x.id === id)).length;
+  const $ = (id) => document.getElementById(id);
 
-  function rebuild(){
-    list.innerHTML = '';
-    list.appendChild(el('div', {class:'ins-row ins-head'}, [
-      el('span', {}, ['Material']), el('span', {}, ['Preço pago (R$)']), el('span', {}, ['Unidades que vêm']), el('span', {}, ['Custo por unidade']), el('span'),
-    ]));
-    (st.insumos||[]).forEach((r, i) => {
-      if (!r.id) r.id = uid();
-      const row = el('div', {class:'ins-row'});
-      const nome = el('input', {class:'inp text-left', value:r.nome||'', placeholder:'ex.: luvas (caixa)'});
-      nome.addEventListener('input', () => { r.nome = nome.value; persist(); });
-      const out = el('b', {class:'mono'}, [fmtBRL(insumoCustoUn(r))]);
-      const upd = () => { out.textContent = fmtBRL(insumoCustoUn(r)); };
-      const valor = numberInput({value:r.valor, kind:'brl', onInput:(n)=>{ r.valor=n; persist(); upd(); }});
-      if (!parseBR(r.valor)) valor.querySelector('input').classList.add('ins-falta');
-      const usos = usoCount(r.id);
-      row.appendChild(el('div', {}, [nome, usos ? el('div', {class:'help', style:'margin:2px 0 0;'}, ['usado em ' + usos + (usos===1?' serviço':' serviços')]) : null]));
-      row.appendChild(valor);
-      row.appendChild(numberInput({value:r.qtd, kind:'num', dec:0, onInput:(n)=>{ r.qtd=n; persist(); upd(); }}));
-      row.appendChild(out);
-      row.appendChild(el('button', {class:'row-del', title:'remover', onclick:()=>{
-        if (usos && !confirm('Esse material está em ' + usos + (usos===1?' serviço':' serviços') + '. Remover mesmo assim?')) return;
-        st.insumos.splice(i,1); persist(); rebuild();
-      }}, ['✕']));
-      list.appendChild(row);
-    });
+  // pergunta principal
+  const main = el('div', {class:'mat-main'});
+  main.appendChild(el('label', {class:'mat-q'}, ['Quanto a clínica gasta por mês com materiais?',
+    el('div', {class:'help'}, ['Some as notas e boletos dos fornecedores: material odontológico, descartáveis, anestésico, resina, esterilização… Uma média aproximada já basta.'])]));
+  const mainInp = numberInput({value: st.materialMensal || 0, kind:'brl', onInput:(n)=>{ st.materialMensal = n; persist(); refresh(); }});
+  mainInp.querySelector('input').id = 'mat-mensal';
+  mainInp.querySelector('input').style.fontSize = '16px';
+  main.appendChild(mainInp);
+  body.appendChild(main);
+
+  // ajuda: média de 3 meses
+  const det = el('details', {class:'svc-det', style:'margin-top:12px;'});
+  det.appendChild(el('summary', {}, ['Não sei o valor — me ajude a calcular']));
+  det.appendChild(el('p', {class:'help'}, ['Coloque quanto foi gasto com materiais em cada um dos últimos 3 meses (pelas notas, extrato ou boletos). O Precifica tira a média.']));
+  const meses = el('div', {class:'mat-meses'});
+  ['Mês 1', 'Mês 2', 'Mês 3'].forEach((lbl, k) => {
+    meses.appendChild(el('div', {}, [el('div', {class:'help', style:'margin:0 0 3px;'}, [lbl]),
+      numberInput({value: st.materialMeses[k] || 0, kind:'brl', onInput:(n)=>{ st.materialMeses[k] = n; persist(); refreshMedia(); }})]));
+  });
+  det.appendChild(meses);
+  const mediaRow = el('div', {style:'display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px;'}, [
+    el('span', {}, ['Média: ', el('b', {id:'mat-media', class:'mono'}, [''])]),
+    el('button', {class:'btn btn-secondary btn-sm', type:'button', onclick:()=>{
+      const m = media(); st.materialMensal = Math.round(m*100)/100; persist();
+      $('mat-mensal').value = fmtNum(st.materialMensal, 2); refresh();
+    }}, ['Usar essa média']),
+  ]);
+  det.appendChild(mediaRow);
+  body.appendChild(det);
+  function media(){
+    const v = st.materialMeses.map(x => parseBR(x)).filter(x => x > 0);
+    return v.length ? v.reduce((a,b)=>a+b,0) / v.length : 0;
   }
-  rebuild();
+  function refreshMedia(){ const e = $('mat-media'); if (e) e.textContent = fmtBRL(media()); }
 
-  const btns = el('div', {style:'display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;'});
-  btns.appendChild(el('button', {class:'btn btn-secondary btn-sm', type:'button', onclick:()=>{
-    st.insumos.push({id:uid(), codigo:'', nome:'', unidade:'', qtd:1, valor:0}); persist(); rebuild();
-  }}, ['+ Adicionar material']));
-  const prontoBtn = el('button', {class:'btn btn-secondary btn-sm', type:'button'}, ['+ Escolher da lista pronta']);
-  btns.appendChild(prontoBtn);
-  body.appendChild(btns);
+  // resultado
+  const res = el('div', {class:'svc-res', style:'margin-top:18px;'});
+  res.appendChild(el('div', {class:'svc-res-lbl'}, ['Custo de material por hora de atendimento']));
+  res.appendChild(el('div', {class:'svc-res-val', id:'mat-hora'}, ['']));
+  res.appendChild(el('div', {class:'help', id:'mat-hora-conta'}, ['']));
+  res.appendChild(el('div', {class:'svc-res-line', id:'mat-exemplos', style:'margin-top:6px;'}, ['']));
+  body.appendChild(res);
 
-  const picker = el('div', {class:'svc-picker', style:'display:none;'});
-  prontoBtn.addEventListener('click', () => { drawPicker(); picker.style.display = picker.style.display === 'none' ? '' : 'none'; });
-  function drawPicker(){
-    picker.innerHTML = '';
-    const ja = new Set((st.insumos||[]).map(x => (x.nome||'').trim().toLowerCase()));
-    const faltam = MATERIAIS_ODONTO.filter(([n]) => !ja.has(n.toLowerCase()));
-    if (!faltam.length){ picker.appendChild(el('p', {class:'help'}, ['Você já adicionou todos os itens da lista pronta.'])); return; }
-    picker.appendChild(el('p', {class:'help', style:'margin-top:0;'}, ['Marque o que você usa. Depois é só preencher o preço que você paga.']));
-    const marcados = new Set();
-    const chips = el('div', {class:'svc-chips'});
-    faltam.forEach(([n]) => {
-      const c = el('button', {type:'button', class:'svc-chip'}, [n]);
-      c.addEventListener('click', () => { if (marcados.has(n)){ marcados.delete(n); c.classList.remove('on'); } else { marcados.add(n); c.classList.add('on'); } });
-      chips.appendChild(c);
-    });
-    picker.appendChild(chips);
-    picker.appendChild(el('button', {class:'btn btn-primary btn-sm', type:'button', style:'margin-top:10px;', onclick:()=>{
-      faltam.filter(([n]) => marcados.has(n)).forEach(([n, q]) => st.insumos.push({id:uid(), codigo:'', nome:n, unidade:'', qtd:q, valor:0}));
-      picker.style.display = 'none'; persist(); rebuild();
-    }}, ['Adicionar os marcados']));
-  }
-  body.appendChild(picker);
+  // aviso de conta em dobro
+  body.appendChild(el('div', {id:'mat-dobro', class:'callout', style:'display:none;'}));
 
-  body.appendChild(el('div', {class:'callout'}, [
-    'Na etapa ', el('b',{},['Meus Serviços']), ', em cada serviço, escolha ', el('b',{},['"Escolher da lista"']),
-    ' e diga quanto de cada material usa (ex.: 2 luvas, 1 máscara). O custo do material entra sozinho — e se o preço mudar aqui, todos os serviços se atualizam.',
+  body.appendChild(el('ul', {class:'note-list', style:'margin-top:16px;'}, [
+    el('li', {}, ['Na etapa Meus Serviços, o material de cada serviço sai automático: custo por hora × tempo do serviço.']),
+    el('li', {}, ['Algum procedimento gasta muito mais que a média (ex.: kit de clareamento, implante)? Nele, escolha "Valor próprio" em Meus Serviços. Prótese e laboratório vão em "Outros custos" do serviço.']),
+    el('li', {}, ['As horas de atendimento vêm da etapa Minha Hora (horas disponíveis × ocupação). Ajustando lá, o custo por hora daqui se atualiza.']),
   ]));
-  body.appendChild(el('p', {class:'help'}, ['Os campos em destaque estão sem preço: preencha com o valor que você paga, senão o material conta como R$ 0.']));
+
+  function refresh(){
+    const horaC = computeHora('prestador', st);
+    const taxa = taxaMaterialHora(st);
+    const mensal = parseBR(st.materialMensal);
+    $('mat-hora').textContent = mensal ? fmtBRL(taxa) : '—';
+    $('mat-hora-conta').textContent = mensal
+      ? fmtBRL(mensal) + ' por mês ÷ ' + fmtNum(horaC.horasEfetivas, 0) + ' h atendidas por mês'
+      : 'Preencha o gasto mensal acima pra ver o custo por hora.';
+    $('mat-exemplos').innerHTML = mensal
+      ? 'Ex.: um atendimento de 30 min leva <b>' + fmtBRL(taxa*0.5) + '</b> de material; um de 1 h, <b>' + fmtBRL(taxa) + '</b>.'
+      : '';
+    const neg = negocioFlat('prestador');
+    const itens = neg.map((it, i) => ({label: it.label, v: parseBR((st.negocio||[])[i])}))
+      .filter(x => NEGOCIO_ITENS_MATERIAL.includes(x.label) && x.v > 0);
+    const dob = $('mat-dobro');
+    if (itens.length && mensal){
+      dob.style.display = '';
+      dob.innerHTML = '<b>Cuidado pra não contar duas vezes:</b> em Meu Negócio você já colocou ' +
+        itens.map(x => x.label + ' (' + fmtBRL(x.v) + ')').join(', ') +
+        '. Esses valores já entram no custo da sua hora. Se eles também estão no gasto acima, tire de um dos dois lugares.';
+    } else dob.style.display = 'none';
+    refreshMedia();
+  }
+
   panel.appendChild(body);
   footNav(panel, {});
+  requestAnimationFrame(refresh);
 }
 
 function renderStepInsumos(panel){
@@ -2159,8 +2039,7 @@ function buildCalcPrestador(wrap, body){
   }
 
   function card(r, i){
-    if (!Array.isArray(r.materiais)) r.materiais = [];
-    if (!r.matModo) r.matModo = 'valor';
+    if (!r.matModo) r.matModo = 'auto';
     const root = el('div', {class:'svc-card'});
 
     // cabeçalho
@@ -2184,48 +2063,24 @@ function buildCalcPrestador(wrap, body){
 
     // material
     const mat = el('div', {class:'svc-q'});
-    mat.appendChild(el('label', {}, ['Quanto gasta de material?']));
+    mat.appendChild(el('label', {}, ['Material usado']));
     const modes = el('div', {class:'svc-seg'});
-    const bValor = el('button', {type:'button', class: r.matModo==='valor' ? 'on' : ''}, ['Valor aproximado']);
-    const bLista = el('button', {type:'button', class: r.matModo==='lista' ? 'on' : ''}, ['Escolher da lista']);
+    const auto = r.matModo !== 'valor';
+    const bAuto = el('button', {type:'button', class: auto ? 'on' : ''}, ['Automático']);
+    const bValor = el('button', {type:'button', class: auto ? '' : 'on'}, ['Valor próprio']);
+    bAuto.addEventListener('click', () => { r.matModo = 'auto'; persist(); rebuild(); });
     bValor.addEventListener('click', () => { r.matModo = 'valor'; persist(); rebuild(); });
-    bLista.addEventListener('click', () => { r.matModo = 'lista'; persist(); rebuild(); });
-    modes.appendChild(bValor); modes.appendChild(bLista);
+    modes.appendChild(bAuto); modes.appendChild(bValor);
     mat.appendChild(modes);
-    if (r.matModo === 'valor'){
-      mat.appendChild(numberInput({value:r.insumos||0, kind:'brl', onInput:(n)=>{ r.insumos=n; persist(); refreshAll(); }}));
-    } else {
-      const insumos = st.insumos || [];
-      if (!insumos.length){
-        mat.appendChild(el('div', {class:'help'}, ['Você ainda não cadastrou materiais. ',
+    if (auto){
+      mat.appendChild(el('div', {class:'help', style:'margin:0;'}, [el('b', {id:'svc-mat-'+i, class:'mono', style:'color:var(--ink);font-size:14px;'}, ['']), ' ', el('span', {id:'svc-mat-conta-'+i}, [''])]));
+      if (!parseBR(st.materialMensal)){
+        mat.appendChild(el('div', {class:'help'}, ['Informe o gasto mensal com materiais pra calcular. ',
           el('button', {class:'btn btn-secondary btn-sm', type:'button', onclick:()=>goStep('insumos')}, ['Ir para Insumos'])]));
-      } else {
-        const byId = {}; insumos.forEach(x => byId[x.id] = x);
-        r.materiais = r.materiais.filter(m => byId[m.id]);
-        const chips = el('div', {class:'svc-mats'});
-        r.materiais.forEach((m, mi) => {
-          const ins = byId[m.id];
-          const qtyInp = numberInput({value:m.qtd, kind:'num', dec:2, onInput:(n)=>{ m.qtd=n; persist(); refreshAll(); updChip(); }});
-          qtyInp.style.width = '70px';
-          const custo = el('span', {class:'mono help', style:'margin:0;'}, ['']);
-          const updChip = () => { custo.textContent = '= ' + fmtBRL(parseBR(m.qtd) * insumoCustoUn(ins)); };
-          updChip();
-          chips.appendChild(el('div', {class:'svc-mat'}, [
-            el('span', {class:'svc-mat-nome'}, [ins.nome || '(sem nome)']), el('span',{class:'help',style:'margin:0;'},['×']), qtyInp, custo,
-            el('button', {class:'row-del', type:'button', title:'tirar', onclick:()=>{ r.materiais.splice(mi,1); persist(); rebuild(); }}, ['✕']),
-          ]));
-        });
-        mat.appendChild(chips);
-        const disponiveis = insumos.filter(x => !r.materiais.some(m => m.id === x.id));
-        if (disponiveis.length){
-          const sel = el('select', {class:'inp', style:'margin-top:6px;'});
-          sel.appendChild(el('option', {value:''}, ['+ adicionar material…']));
-          disponiveis.forEach(x => sel.appendChild(el('option', {value:x.id}, [(x.nome||'(sem nome)') + ' — ' + fmtBRL(insumoCustoUn(x)) + '/un'])));
-          sel.addEventListener('change', () => { if (!sel.value) return; r.materiais.push({id:sel.value, qtd:1}); persist(); rebuild(); });
-          mat.appendChild(sel);
-        }
-        mat.appendChild(el('div', {class:'help'}, ['Total de material: ', el('b', {id:'svc-mat-'+i, class:'mono'}, [''])]));
       }
+    } else {
+      mat.appendChild(numberInput({value:r.insumos||0, kind:'brl', onInput:(n)=>{ r.insumos=n; persist(); refreshAll(); }}));
+      mat.appendChild(el('div', {class:'help'}, ['Pra serviços que gastam bem mais (ou menos) que a média.']));
     }
     qs.appendChild(mat);
     cols.appendChild(qs);
@@ -2282,7 +2137,7 @@ function buildCalcPrestador(wrap, body){
   addBtn.addEventListener('click', () => { picker.style.display = picker.style.display === 'none' ? '' : 'none'; });
   const novo = (nome, min) => {
     st.calcular.push({nome, atend:0, dur:min/60, insumos:0, outros:0, impostos:g.impostos, repasse:0, comissao:g.comissao, cartao:g.cartao, margem:g.margem,
-      usaPadrao:true, matModo:'valor', materiais:[], cobraHoje:0});
+      usaPadrao:true, matModo:'auto', cobraHoje:0});
     picker.style.display = 'none'; persist(); rebuild();
   };
   SERVICOS_PRONTOS.forEach(grp => {
@@ -2318,6 +2173,7 @@ function buildCalcPrestador(wrap, body){
       setTxt('svc-status-'+i, statusFrase(c._status));
       const se = $('svc-status-'+i); if (se) se.className = 'svc-status st-' + (c._status||'none');
       setTxt('svc-mat-'+i, fmtBRL(parseBR(c.insumos)));
+      setTxt('svc-mat-conta-'+i, parseBR(st.materialMensal) ? '(' + fmtBRL(taxaMaterialHora(st)) + '/h × ' + fmtNum(parseBR(c.dur)*60, 0) + ' min)' : '');
       setTxt('svc-tempo-'+i, fmtBRL(c._custoTempo));
       setTxt('svc-direto-'+i, fmtBRL(c._custoDireto));
       setTxt('svc-horas-'+i, fmtNum(c._horasTotais, 1) + ' h');
@@ -2721,4 +2577,4 @@ function renderStepCrescer(panel){
 /* Boot                                                                    */
 /* ---------------------------------------------------------------------- */
 
-initAuthListener();
+initApp();
