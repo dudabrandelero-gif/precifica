@@ -434,3 +434,47 @@
   .mat-q .help{font-weight:400;}
   .mat-meses{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
   @media (max-width:520px){.mat-meses{grid-template-columns:1fr;}}
+
+/* ---------- Item detalhável (lista de assinaturas) ---------- */
+  .det-toggle{background:none;border:none;padding:2px 0;margin-top:2px;color:var(--amber-strong);font-size:12.5px;font-weight:700;cursor:pointer;font-family:var(--font-body);}
+  .det-toggle:hover{text-decoration:underline;}
+  .det-box{margin:2px 0 10px;padding:10px 12px;border:1px dashed var(--border-strong);border-radius:8px;}
+  .det-row{display:grid;grid-template-columns:1fr 180px auto;gap:8px;align-items:center;margin-bottom:6px;}
+  @media (max-width:560px){.det-row{grid-template-columns:1fr auto;}.det-row > input{grid-column:1 / -1;}}
+
+/* ---------- Pop-up (semanas trabalhadas) ---------- */
+  :root{--sem-trab:#5E9C76;--sem-ferias:#E0A93B;--sem-feriado:#C96A5A;--sem-ausencia:#9A86C2;}
+  .modal-overlay{position:fixed;inset:0;background:rgba(20,22,16,.45);display:flex;align-items:center;justify-content:center;z-index:1000;padding:16px;}
+  .modal-box{background:var(--surface);border-radius:var(--radius);box-shadow:0 20px 60px rgba(0,0,0,.25);width:100%;max-width:620px;max-height:90vh;overflow:auto;padding:18px 20px;}
+  .modal-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px;}
+  .modal-head h3{margin:0;font-size:17px;}
+  .sem-grade{display:grid;grid-template-columns:repeat(13,1fr);gap:4px;margin:14px 0 8px;}
+  .sem-q{display:inline-block;aspect-ratio:1;min-width:12px;border-radius:3px;background:var(--sem-trab);}
+  .sem-q.ferias{background:var(--sem-ferias);} .sem-q.feriado{background:var(--sem-feriado);} .sem-q.ausencia{background:var(--sem-ausencia);}
+  .sem-legenda{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12.5px;color:var(--ink-soft);}
+  .sem-legenda > span{display:inline-flex;align-items:center;gap:6px;}
+  .sem-legenda .sem-q{width:12px;height:12px;}
+  .sem-conta{margin-top:12px;font-size:13.5px;line-height:1.6;padding:10px 12px;background:var(--surface-2);border-radius:8px;}
+  .sem-res{color:var(--green-strong);}
+
+/* ---------- Semanas editáveis ---------- */
+  :root{--sem-capacitacao:#4C8DAE;}
+  .sem-q.capacitacao{background:var(--sem-capacitacao);}
+  .sem-paleta{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;}
+  .sem-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border-strong);background:var(--surface);color:var(--ink);border-radius:100px;padding:5px 11px;font-size:12.5px;cursor:pointer;font-family:var(--font-body);}
+  .sem-chip .sem-q{width:12px;height:12px;min-width:12px;}
+  .sem-chip.on{border-color:var(--ink);box-shadow:0 0 0 1px var(--ink);font-weight:700;}
+  .sem-grade-wrap{display:flex;flex-direction:column;gap:4px;user-select:none;touch-action:none;}
+  .sem-linha{display:grid;grid-template-columns:56px repeat(13,1fr);gap:4px;align-items:center;}
+  .sem-tri{font-size:11px;color:var(--ink-faint);font-weight:700;}
+  .sem-cel{border:none;padding:0;cursor:pointer;width:100%;}
+  .sem-cel:hover{outline:2px solid var(--ink);outline-offset:1px;}
+
+/* ---------- Comunidade: trilhas ---------- */
+  .trilha-row{display:grid;grid-template-columns:2fr 1fr 1.3fr 1fr auto;gap:8px;align-items:center;margin-bottom:6px;}
+  .trilha-head{font-size:11px;font-weight:700;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.03em;}
+  @media (max-width:600px){.trilha-row{grid-template-columns:1fr 1fr;}.trilha-head{display:none;}.trilha-row > input.text-left{grid-column:1 / -1;}}
+
+  .sem-linha{grid-template-columns:40px repeat(5,1fr) !important;gap:4px;}
+  .sem-grade-wrap .sem-cel{max-height:28px;aspect-ratio:auto;height:26px;}
+  .modal-box{max-width:560px;}
