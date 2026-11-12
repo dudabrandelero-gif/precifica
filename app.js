@@ -127,8 +127,8 @@ const MODELS = {
     ],
     horaType:'prestador',
     calcType:'prestador',
-    calcTitle:'Meus Serviços',
-    calcRowNoun:'serviço',
+    calcTitle:'Meus Procedimentos',
+    calcRowNoun:'procedimento',
     resumoType:'prestador',
   },
   produto: {
@@ -773,6 +773,10 @@ function computeResumo(modelKey, state){
       custoHoraEmpresa: horaC.custoHoraEmpresa,
       custoHoraProducao: horaC.custoHoraProducao,
       unidades: calc.totals.unidades,
+      perdaMensal: calc.rows.reduce((s, r) => {
+        const hoje = parseBR(r.cobraHoje);
+        return s + (hoje > 0 ? Math.max(0, r._preco - hoje) * parseBR(r.unidades) : 0);
+      }, 0),
       receita: calc.totals.receita,
       liquido: lucro,
       bateMeta: lucro >= meta,
@@ -794,6 +798,10 @@ function computeResumo(modelKey, state){
       horasComprometidas,
       capacidadeUsada: safeDiv(horasComprometidas, horaC.horasProdutivasMes),
       capStatus,
+      perdaMensal: calc.rows.reduce((s, r) => {
+        const hoje = parseBR(r.cobraHoje);
+        return s + (hoje > 0 ? Math.max(0, r._preco - hoje) * r._alunosMes : 0);
+      }, 0),
       receita: calc.totals.receita,
       liquido: lucro,
       bateMeta: lucro >= meta,
@@ -933,6 +941,7 @@ function render(){
   root.innerHTML = '';
   if (APP.view === 'loading'){ root.appendChild(renderLoading()); return; }
   if (APP.view === 'menu'){ root.appendChild(renderTopbar()); root.appendChild(renderMenu()); return; }
+  if (APP.view === 'rapido'){ root.appendChild(renderTopbar()); root.appendChild(renderRapido()); window.scrollTo(0,0); return; }
   if (APP.view === 'wizard'){
     root.appendChild(renderTopbar());
     if (!APP.state){ root.appendChild(renderLoading()); return; }
@@ -986,49 +995,137 @@ function fmtWhen(ts){
   }catch(e){ return ''; }
 }
 
+// Pra onde vai a aplicação ao DentistaCEO. Preencha UM dos três:
+// link de formulário (Google Forms, Typeform…), WhatsApp (só números, com DDI 55) ou e-mail.
+const APLICACAO = { link:'', whatsapp:'', email:'ubiratan@archettiodonto.com.br' };
+function aplicarDentistaCEO(numeros){
+  const texto = 'Olá! Usei o Precifica e quero aplicar para o DentistaCEO.' + (numeros ? '\n\nMeus números:\n' + numeros : '');
+  if (APLICACAO.link) return window.open(APLICACAO.link, '_blank');
+  if (APLICACAO.whatsapp) return window.open('https://wa.me/' + APLICACAO.whatsapp + '?text=' + encodeURIComponent(texto), '_blank');
+  window.location.href = 'mailto:' + APLICACAO.email + '?subject=' + encodeURIComponent('Aplicação DentistaCEO') + '&body=' + encodeURIComponent(texto);
+}
+
 function renderMenu(){
   const wrap = el('div', {class:'home'});
   wrap.appendChild(el('div', {class:'home-hero'}, [
     el('div', {class:'eyebrow'}, ['PRECIFICA · Método 4C']),
-    el('h1', {class:'disp'}, ['Descubra o preço certo do seu trabalho.']),
-    el('p', {}, ['Escolha um modelo pra continuar (ou começar). O que você preencher fica salvo neste aparelho, sem precisar de login.']),
+    el('h1', {class:'disp'}, ['Descubra quanto a sua clínica está deixando na mesa.']),
+    el('p', {}, ['Em 2 minutos você vê se o seu preço paga a clínica e o salário que você quer tirar. Depois, se quiser, faz o passo a passo completo.']),
   ]));
 
-  const userbar = el('div', {class:'menu-userbar'});
+  const resumo = APP.menuResumo || {};
+  const r = resumo.prestador;
+  const main = el('div', {class:'home-main'});
+  main.appendChild(el('div', {}, [
+    el('span', {class:'tag'}, ['Para dentistas']),
+    el('h2', {class:'disp', style:'margin:6px 0 6px;'}, ['Minha clínica']),
+    el('p', {style:'margin:0;color:var(--ink-soft);'}, ['Procedimentos, hora clínica, custos da cadeira, equipe (ASB, recepção) — o seu tempo de atendimento é o produto.']),
+    r ? el('div', {class:'progress-line', style:'margin-top:10px;'}, [el('span', {}, ['meta ', el('b',{},[fmtBRL(r.meta)])]), el('span', {}, [r.bateMeta ? '✅ bate a meta' : '❌ ainda não bate'])]) : null,
+  ]));
+  main.appendChild(el('div', {class:'home-main-btns'}, [
+    el('button', {class:'btn btn-primary', type:'button', onclick:()=>{ APP.view = 'rapido'; render(); }}, ['⚡ Modo rápido (2 min)']),
+    el('button', {class:'btn btn-secondary', type:'button', onclick:()=>selectModel('prestador')}, [r ? 'Continuar o passo a passo' : 'Passo a passo completo']),
+  ]));
+  wrap.appendChild(main);
+
+  wrap.appendChild(el('div', {class:'cat-title', style:'margin-top:30px;'}, ['Também vende produtos ou cursos?']));
+  const outros = el('div', {class:'home-outros'});
+  ['produto', 'conhecimento'].forEach(k => {
+    const m = MODELS[k]; const rr = resumo[k];
+    outros.appendChild(el('button', {type:'button', class:'home-outro', onclick:()=>selectModel(k)}, [
+      el('b', {}, [m.label]), el('span', {class:'help', style:'margin:0;'}, [m.examples]),
+      rr ? el('span', {class:'help', style:'margin:0;'}, [rr.bateMeta ? '✅ bate a meta' : '❌ ainda não bate']) : null,
+    ]));
+  });
+  wrap.appendChild(outros);
+
+  const userbar = el('div', {class:'menu-userbar', style:'margin-top:28px;'});
   userbar.appendChild(el('span', {class:'who'}, ['Vai usar em outro computador ou celular? ']));
   userbar.appendChild(el('button', {class:'btn-ghost', onclick: baixarBackup}, ['⬇ Baixar backup']));
   userbar.appendChild(el('button', {class:'btn-ghost', onclick: carregarBackup}, ['⬆ Carregar backup']));
   wrap.appendChild(userbar);
+  wrap.appendChild(el('ul', {class:'note-list', style:'margin-top:14px;max-width:560px;'}, [
+    el('li', {}, ['Seus dados ficam salvos neste navegador. Pra continuar em outro aparelho, baixe o backup e carregue lá.']),
+    el('li', {}, ['Nada é enviado pra internet. Se limpar os dados do navegador, o que foi preenchido some — guarde um backup.']),
+  ]));
+  return wrap;
+}
 
-  const grid = el('div', {class:'model-grid'});
-  const resumo = APP.menuResumo;
-  Object.values(MODELS).forEach(m => {
-    const card = el('div', {class:'model-card', onclick:()=>selectModel(m.key)}, [
-      el('span', {class:'tag'}, [m.tag]),
-      el('h3', {class:'disp'}, [m.label]),
-      el('p', {}, [m.desc]),
-      el('div', {class:'ex'}, [m.examples]),
-    ]);
-    const r = resumo && resumo[m.key];
-    if (resumo === null){
-      card.appendChild(el('div', {class:'progress-line'}, ['carregando…']));
-    } else if (r){
-      card.appendChild(el('div', {class:'progress-line'}, [
-        el('span', {}, ['meta ', el('b',{},[fmtBRL(r.meta)])]),
-        el('span', {}, [r.bateMeta ? '✅ bate a meta' : '❌ ainda não bate']),
+/* ---------- Modo rápido: 5 números → quanto está deixando na mesa ---------- */
+// Premissas simples (o passo a passo completo permite ajustar tudo):
+const RAPIDO = { semanasAno:46, ocupacao:0.7, impostosTaxas:0.09 };
+function calcRapido(q){
+  const horasMes = (parseBR(q.horasSemana)||0) * RAPIDO.semanasAno / 12 * RAPIDO.ocupacao;
+  const necessarioHora = safeDiv((parseBR(q.custosClinica)||0) + (parseBR(q.querTirar)||0), horasMes);
+  const durH = (parseBR(q.duracao)||0) / 60;
+  const material = parseBR(q.material)||0;
+  const precoCerto = durH > 0 ? (necessarioHora * durH + material) / (1 - RAPIDO.impostosTaxas) : 0;
+  const cobra = parseBR(q.cobra)||0;
+  const rendeHojeHora = durH > 0 ? Math.max(0, cobra * (1 - RAPIDO.impostosTaxas) - material) / durH : 0;
+  const perdaMes = cobra > 0 ? Math.max(0, necessarioHora - rendeHojeHora) * horasMes : 0;
+  return {horasMes, necessarioHora, precoCerto, rendeHojeHora, perdaMes, cobra};
+}
+function renderRapido(){
+  const q = lsGet('rapido') || {querTirar:15000, custosClinica:12000, horasSemana:40, procedimento:'Restauração em resina', duracao:60, material:30, cobra:250};
+  const salvar = () => { try{ lsSet('rapido', q); }catch(e){} };
+  const wrap = el('div', {class:'home rapido'});
+  wrap.appendChild(el('div', {class:'home-hero'}, [
+    el('div', {class:'eyebrow'}, ['Modo rápido · 2 minutos']),
+    el('h1', {class:'disp'}, ['Quanto você está deixando na mesa?']),
+    el('p', {}, ['Cinco números e pronto. Use valores aproximados — dá pra refinar depois no passo a passo.']),
+  ]));
+  const grid = el('div', {class:'rapido-grid'});
+  const form = el('div', {class:'rapido-form'});
+  const out = el('div', {class:'rapido-res'});
+  grid.appendChild(form); grid.appendChild(out);
+  wrap.appendChild(grid);
+  const campo = (n, label, help, key, kind, dec) => form.appendChild(el('div', {class:'rapido-q'}, [
+    el('span', {class:'rapido-n'}, [String(n)]),
+    el('label', {}, [label, help ? el('div',{class:'help'},[help]) : null]),
+    numberInput({value:q[key], kind, dec, onInput:(v)=>{ q[key]=v; salvar(); upd(); }}),
+  ]));
+  campo(1, 'Quanto você quer tirar por mês?', 'Seu salário de dentista (pró-labore).', 'querTirar', 'brl');
+  campo(2, 'Quanto custa a clínica por mês?', 'Aluguel, ASB, recepção, contador, luz, sistema, marketing…', 'custosClinica', 'brl');
+  campo(3, 'Quantas horas por semana você atende?', 'Agenda aberta, com ou sem paciente.', 'horasSemana', 'num', 1);
+  const proc = el('div', {class:'rapido-q'}, [el('span', {class:'rapido-n'}, ['4']), el('label', {}, ['Seu procedimento principal', el('div',{class:'help'},['O que você mais faz. Nome, tempo e material.'])])]);
+  const nome = el('input', {class:'inp text-left', value:q.procedimento||'', placeholder:'ex.: restauração em resina'});
+  nome.addEventListener('input', () => { q.procedimento = nome.value; salvar(); upd(); });
+  proc.appendChild(el('div', {class:'rapido-proc'}, [nome,
+    el('div', {}, [el('span',{class:'help',style:'margin:0;'},['minutos']), numberInput({value:q.duracao, kind:'num', dec:0, onInput:(v)=>{ q.duracao=v; salvar(); upd(); }})]),
+    el('div', {}, [el('span',{class:'help',style:'margin:0;'},['material (R$)']), numberInput({value:q.material, kind:'brl', onInput:(v)=>{ q.material=v; salvar(); upd(); }})]),
+  ]));
+  form.appendChild(proc);
+  campo(5, 'Quanto você cobra hoje por ele?', 'Valor particular.', 'cobra', 'brl');
+  form.appendChild(el('p', {class:'help', style:'margin-top:10px;'}, ['Premissas do modo rápido: 46 semanas trabalhadas no ano, agenda 70% ocupada e 9% de impostos e taxas de cartão. No passo a passo você ajusta tudo isso.']));
+
+  function upd(){
+    const c = calcRapido(q);
+    out.innerHTML = '';
+    if (!c.horasMes || !c.precoCerto){ out.appendChild(el('p', {class:'help'}, ['Preencha os números pra ver o resultado.'])); return; }
+    if (c.perdaMes > 0){
+      out.appendChild(el('div', {class:'rapido-perda'}, [
+        el('div', {class:'lbl'}, ['💸 Você está deixando na mesa']),
+        el('div', {class:'val'}, [fmtBRL(c.perdaMes)]),
+        el('div', {class:'lbl'}, ['por mês — ' + fmtBRL(c.perdaMes*12) + ' por ano']),
       ]));
     } else {
-      card.appendChild(el('div', {class:'progress-line'}, [el('span',{},['ainda não preenchido'])]));
+      out.appendChild(el('div', {class:'rapido-perda ok'}, [el('div', {class:'lbl'}, ['👏 Seu preço já paga a clínica e o salário que você quer.']),
+        el('div', {class:'lbl', style:'margin-top:4px;'}, ['Vale fazer o passo a passo pra ver os outros procedimentos e a sua margem.'])]));
     }
-    grid.appendChild(card);
-  });
-  wrap.appendChild(grid);
-
-  wrap.appendChild(el('ul', {class:'note-list', style:'margin-top:34px;max-width:560px;'}, [
-    el('li', {}, ['Seus dados ficam salvos neste navegador. Pra continuar em outro aparelho, baixe o backup aqui e carregue lá.']),
-    el('li', {}, ['Pode preencher mais de um modelo — cada um guarda os dados separadamente.']),
-    el('li', {}, ['Nada é enviado pra internet: só quem usa este navegador vê o que foi preenchido. Se limpar o histórico/dados do navegador, os dados somem — guarde um backup.']),
-  ]));
+    const linha = (l, v, cls) => out.appendChild(el('div', {class:'rapido-linha'}, [el('span', {}, [l]), el('b', {class:'mono ' + (cls||'')}, [v])]));
+    linha('Cada hora atendida precisa render', fmtBRL(c.necessarioHora));
+    if (c.cobra > 0) linha('Hoje, com ' + (q.procedimento || 'o procedimento') + ', rende', fmtBRL(c.rendeHojeHora) + '/h', c.rendeHojeHora < c.necessarioHora ? 'neg' : '');
+    linha('Preço certo de ' + (q.procedimento || 'o procedimento'), fmtBRL(c.precoCerto), 'pos');
+    if (c.cobra > 0) linha('Você cobra hoje', fmtBRL(c.cobra));
+    out.appendChild(el('p', {class:'help', style:'margin:8px 0 14px;'}, ['Conta: (custos da clínica + o que você quer tirar) ÷ ' + fmtNum(c.horasMes,0) + ' horas atendidas por mês.']));
+    out.appendChild(el('button', {class:'btn btn-primary', type:'button', style:'width:100%;', onclick:()=>aplicarDentistaCEO(
+      'Quero tirar: ' + fmtBRL(parseBR(q.querTirar)) + '/mês\nCusto da clínica: ' + fmtBRL(parseBR(q.custosClinica)) + '/mês\nHoras/semana: ' + fmtNum(parseBR(q.horasSemana),0)
+      + '\nProcedimento: ' + (q.procedimento||'') + ' — cobro ' + fmtBRL(c.cobra) + ', preço certo ' + fmtBRL(c.precoCerto)
+      + '\nDeixando na mesa: ' + fmtBRL(c.perdaMes) + '/mês')}, ['Quero ajuda pra virar esse jogo → aplicar para o DentistaCEO']));
+    out.appendChild(el('button', {class:'btn btn-secondary', type:'button', style:'width:100%;margin-top:8px;', onclick:()=>selectModel('prestador')}, ['Fazer o passo a passo completo']));
+  }
+  upd();
+  wrap.appendChild(el('button', {class:'btn-ghost', type:'button', style:'margin-top:20px;', onclick:()=>{ APP.view='menu'; render(); }}, ['← Voltar ao início']));
   return wrap;
 }
 
@@ -2157,9 +2254,7 @@ function exampleBadge(){
 function renderStepCalcular(panel){
   const m = MODELS[APP.model];
   panelHead(panel, '6º passo — Calcular', m.calcTitle,
-    APP.model === 'prestador'
-      ? 'Um cartão por serviço: responda 4 perguntas e veja o preço justo na hora. Os marcados "exemplo" são só ilustração — edite ou apague.'
-      : 'Cada ' + m.calcRowNoun + ' com seus custos, impostos e margem — a planilha calcula o preço certo, um por um. Os itens marcados "exemplo" são apenas ilustração: edite os valores ou apague a linha.');
+    'Um cartão por ' + m.calcRowNoun + ': responda poucas perguntas e veja o preço certo na hora. Os detalhes ficam em "Mais detalhes". Os marcados "exemplo" são só ilustração — edite ou apague.');
   panel.querySelector('.panel-head').appendChild(legendRow());
   const body = el('div', {class:'panel-body'});
   const wrap = el('div', {class:'table-wrap'});
@@ -2241,11 +2336,11 @@ function buildCalcPrestador(wrap, body){
 
     // cabeçalho
     const head = el('div', {class:'svc-head'});
-    const nome = el('input', {class:'inp text-left svc-nome', value:r.nome||'', placeholder:'nome do serviço'});
+    const nome = el('input', {class:'inp text-left svc-nome', value:r.nome||'', placeholder:'nome do procedimento'});
     nome.addEventListener('input', () => { r.nome = nome.value; delete r._example; persist(); });
     head.appendChild(nome);
     if (r._example) head.appendChild(exampleBadge());
-    head.appendChild(el('button', {class:'row-del', title:'remover serviço', onclick:()=>{ st.calcular.splice(i,1); persist(); rebuild(); }}, ['✕']));
+    head.appendChild(el('button', {class:'row-del', title:'remover procedimento', onclick:()=>{ st.calcular.splice(i,1); persist(); rebuild(); }}, ['✕']));
     root.appendChild(head);
 
     const cols = el('div', {class:'svc-cols'});
@@ -2329,7 +2424,7 @@ function buildCalcPrestador(wrap, body){
 
   // ---------- adicionar serviço (lista pronta) ----------
   const addBox = el('div', {class:'svc-add'});
-  const addBtn = el('button', {class:'btn btn-primary btn-sm', type:'button'}, ['+ Adicionar serviço']);
+  const addBtn = el('button', {class:'btn btn-primary btn-sm', type:'button'}, ['+ Adicionar procedimento']);
   const picker = el('div', {class:'svc-picker', style:'display:none;'});
   addBtn.addEventListener('click', () => { picker.style.display = picker.style.display === 'none' ? '' : 'none'; });
   const novo = (nome, min) => {
@@ -2420,114 +2515,6 @@ function buildCalcPrestador(wrap, body){
   requestAnimationFrame(refreshAll);
 }
 
-/* ======================= PRODUTO FÍSICO ======================= */
-
-function buildCalcProduto(wrap, body){
-  const table = el('table', {class:'grid'});
-  const heads = ['Produto','Unidades/mês','Matéria-prima (R$)','Tempo produção (h)','Mão de obra','Embalagem (R$)','Frete (R$)','Outros custos (R$)',
-    'Custo unitário','Rateio fixo/un.','Custo total unit.','Impostos %','Comissão %','Taxa plataforma %','Margem %','Preço de venda','Markup','Status',''];
-  table.appendChild(el('thead',{},[el('tr',{}, heads.map(h=>el('th',{},[h])))]));
-  const tbody = el('tbody');
-  table.appendChild(tbody);
-
-  function calc(){ return computeCalcAll('produto', APP.state.calcular, computeHora('produto', APP.state)); }
-
-  function refresh(){
-    const {rows, totals} = calc();
-    rows.forEach((r,i) => {
-      setTxt('c-maoobra-'+i, fmtBRL(r._maoObra));
-      setTxt('c-custou-'+i, fmtBRL(r._custoUnitario));
-      setTxt('c-rateio-'+i, fmtBRL(r._rateio));
-      setTxt('c-custotot-'+i, fmtBRL(r._custoTotalUnitario));
-      setTxt('c-preco-'+i, fmtBRL(r._preco));
-      setTxt('c-markup-'+i, fmtNum(r._markup,2)+'×');
-      setPill('c-status-'+i, r._status);
-    });
-    setTxt('c-tot-unid', fmtNum(totals.unidades,0));
-    setTxt('c-tot-receita', fmtBRL(totals.receita));
-  }
-  function setTxt(id,t){ const e=document.getElementById(id); if(e) e.textContent=t; }
-  function setPill(id,status){ const e=document.getElementById(id); if(e){ e.innerHTML=''; e.appendChild(statusPillNode(status)); } }
-
-  function rebuild(){
-    tbody.innerHTML = '';
-    const {rows} = calc();
-    APP.state.calcular.forEach((r,i) => tbody.appendChild(buildRow(r,i,rows[i])));
-  }
-  function td(node){ const t = el('td'); t.appendChild(node); return t; }
-
-  function buildRow(r, i, computed){
-    const tr = el('tr');
-    const nameTd = el('td', {class:'col-name'});
-    const nameInp = el('input', {class:'inp text-left', value:r.nome||''});
-    nameInp.addEventListener('input', () => { r.nome = nameInp.value; persist(); });
-    nameTd.appendChild(nameInp);
-    if (r._example) nameTd.appendChild(exampleBadge());
-    tr.appendChild(nameTd);
-
-    tr.appendChild(td(numberInput({value:r.unidades, kind:'num', dec:0, onInput:(n)=>{r.unidades=n;persist();refresh();}})));
-
-    const mpTd = el('td');
-    const mpWrap = el('div', {style:'display:flex;gap:4px;align-items:center;'});
-    mpWrap.appendChild(numberInput({value:r.materiaPrima, kind:'brl', onInput:(n)=>{r.materiaPrima=n;persist();refresh();}}));
-    const btn = el('button', {class:'btn-ghost btn-sm', title:'somar a partir da matéria-prima', style:'padding:6px 8px;'}, ['🧮']);
-    btn.addEventListener('click', (e) => {
-      openInsumoPopover(e.currentTarget, (total) => {
-        r.materiaPrima = total; persist();
-        mpWrap.querySelector('input').value = fmtNum(total,2);
-        refresh();
-      });
-    });
-    mpWrap.appendChild(btn);
-    mpTd.appendChild(mpWrap);
-    tr.appendChild(mpTd);
-
-    tr.appendChild(td(numberInput({value:r.tempo, kind:'num', dec:2, onInput:(n)=>{r.tempo=n;persist();refresh();}})));
-    tr.appendChild(td(lockedOut('c-maoobra-'+i, fmtBRL(computed._maoObra))));
-    tr.appendChild(td(numberInput({value:r.embalagem, kind:'brl', onInput:(n)=>{r.embalagem=n;persist();refresh();}})));
-    tr.appendChild(td(numberInput({value:r.frete, kind:'brl', onInput:(n)=>{r.frete=n;persist();refresh();}})));
-    tr.appendChild(td(numberInput({value:r.outros, kind:'brl', onInput:(n)=>{r.outros=n;persist();refresh();}})));
-    tr.appendChild(td(lockedOut('c-custou-'+i, fmtBRL(computed._custoUnitario))));
-    tr.appendChild(td(lockedOut('c-rateio-'+i, fmtBRL(computed._rateio))));
-    tr.appendChild(td(lockedOut('c-custotot-'+i, fmtBRL(computed._custoTotalUnitario))));
-    tr.appendChild(td(numberInput({value:r.impostos, kind:'pct', onInput:(n)=>{r.impostos=n;persist();refresh();}})));
-    tr.appendChild(td(numberInput({value:r.comissao, kind:'pct', onInput:(n)=>{r.comissao=n;persist();refresh();}})));
-    tr.appendChild(td(numberInput({value:r.plataforma, kind:'pct', onInput:(n)=>{r.plataforma=n;persist();refresh();}})));
-    tr.appendChild(td(numberInput({value:r.margem, kind:'pct', onInput:(n)=>{r.margem=n;persist();refresh();}})));
-    tr.appendChild(td(resultOut('c-preco-'+i, fmtBRL(computed._preco))));
-    tr.appendChild(td(lockedOut('c-markup-'+i, fmtNum(computed._markup,2)+'×')));
-    const statusTd = el('td', {id:'c-status-'+i}); statusTd.appendChild(statusPillNode(computed._status)); tr.appendChild(statusTd);
-    const delTd = el('td');
-    delTd.appendChild(el('button', {class:'row-del', onclick:()=>{ APP.state.calcular.splice(i,1); persist(); rebuild(); refresh(); }}, ['✕']));
-    tr.appendChild(delTd);
-    return tr;
-  }
-
-  rebuild();
-  wrap.appendChild(table);
-  const initTotals = calc().totals;
-  const tfoot = el('tfoot', {}, [el('tr', {}, [
-    el('td', {style:'font-weight:800;'}, ['TOTAL MÊS']),
-    el('td', {}, [lockedOut('c-tot-unid',fmtNum(initTotals.unidades,0))]),
-    el('td'), el('td'), el('td'), el('td'), el('td'), el('td'), el('td'), el('td'), el('td'), el('td'), el('td'), el('td'),
-    el('td', {}, [resultOut('c-tot-receita',fmtBRL(initTotals.receita))]), el('td'), el('td'), el('td'),
-  ])]);
-  table.appendChild(tfoot);
-
-  body.appendChild(addRowBtn('adicionar produto', () => {
-    APP.state.calcular.push({nome:'', unidades:0, materiaPrima:0, tempo:0, embalagem:0, frete:0, outros:0, impostos:.06, comissao:.1, plataforma:.05, margem:.4});
-    persist(); rebuild(); refresh();
-  }));
-  body.appendChild(el('ul', {class:'note-list', style:'margin-top:16px;'}, [
-    el('li', {}, ['Custo matéria-prima = soma dos insumos que entram em 1 unidade (veja a etapa Matéria-Prima).']),
-    el('li', {}, ['Tempo produção = horas que uma pessoa gasta fazendo 1 unidade (cortar, montar, costurar, acabamento).']),
-    el('li', {}, ['Rateio fixo por unidade divide o custo fixo da empresa entre TODOS os produtos, proporcional ao volume de cada mês.']),
-    el('li', {}, ['Se vende em marketplace (Shopee, Mercado Livre), coloque a taxa deles em "Taxa plataforma".']),
-  ]));
-}
-
-/* ======================= PROFISSIONAL DO CONHECIMENTO ======================= */
-
 const MODALIDADES = ['1:1','GRUPO','GRAVADO','MISTO','EVENTO','COMUNIDADE'];
 const SEM_POR_MES = 52 / 12;
 // Comunidade por assinatura: lives semanais + trilhas de aulas gravadas + moderação.
@@ -2552,214 +2539,374 @@ function comunidadeHoras(cfg){
 }
 const FREQUENCIAS = [[1,'Todo mês'],[2,'A cada 2 meses'],[3,'Trimestral (a cada 3 meses)'],[4,'A cada 4 meses'],[6,'Semestral'],[12,'Anual']];
 
-function buildCalcConhecimento(wrap, body){
-  const table = el('table', {class:'grid'});
-  const heads = ['Produto / programa','Modalidade','Acontece','Alunos por turma/edição','Duração (meses)','Horas ao vivo/aluno','Horas ao vivo em grupo','Horas preparação',
-    'Horas suporte','Horas totais/edição','Horas/aluno','Custo/aluno (mat.)','Custo fixo por edição','Custo tempo/edição','Custo total/edição','Custo/aluno',
-    'Taxa plataforma %','Afiliados %','Impostos %','Margem %','Desconto do lote promocional %','% dos alunos no lote promocional',
-    'Preço cheio','Preço promocional','Receita por edição','Receita média/mês','Status',''];
-  table.appendChild(el('thead',{},[el('tr',{}, heads.map(h=>el('th',{},[h])))]));
-  const tbody = el('tbody');
-  table.appendChild(tbody);
 
-  function calc(){ return computeCalcAll('conhecimento', APP.state.calcular, computeHora('conhecimento', APP.state)); }
+function abrirComunidade(r, onDone){
+  const cfg = JSON.parse(JSON.stringify(r.comunidade || comunidadeDefault()));
+  const overlay = el('div', {class:'modal-overlay'});
+  const box = el('div', {class:'modal-box', role:'dialog', 'aria-label':'Montar comunidade'});
+  overlay.appendChild(box);
+  const onKey = (e) => { if (e.key === 'Escape') fechar(); };
+  const fechar = () => { overlay.remove(); document.removeEventListener('keydown', onKey); };
+  document.addEventListener('keydown', onKey);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) fechar(); });
+  box.appendChild(el('div', {class:'modal-head'}, [el('h3', {}, ['Montar comunidade']),
+    el('button', {class:'row-del', type:'button', title:'fechar', onclick:fechar}, ['✕'])]));
+  box.appendChild(el('p', {class:'help', style:'margin:0 0 10px;'}, ['Conte o que acontece dentro da comunidade. O Precifica transforma tudo em horas por mês — e o preço sai por membro, por mês (assinatura).']));
 
-  function refresh(){
+  const campo = (label, help, key, dec) => el('div', {class:'field-row'}, [
+    el('label', {}, [label, help ? el('div',{class:'help'},[help]) : null]),
+    numberInput({value:cfg[key], kind:'num', dec:dec, onInput:(n)=>{ cfg[key]=n; upd(); }}),
+  ]);
+  box.appendChild(el('div', {class:'cat-title'}, ['Lives com os inscritos']));
+  box.appendChild(campo('Lives por semana', null, 'livesSemana', 1));
+  box.appendChild(campo('Duração de cada live (horas)', null, 'duracaoLive', 1));
+  box.appendChild(campo('Preparação de cada live (horas)', 'Roteiro, slides, convidados.', 'prepLive', 1));
+
+  box.appendChild(el('div', {class:'cat-title', style:'margin-top:14px;'}, ['Trilhas de aulas gravadas']));
+  box.appendChild(el('p', {class:'help', style:'margin:0 0 6px;'}, ['O tempo de produzir cada trilha é diluído nos meses em que ela vai servir aos membros.']));
+  const lista = el('div');
+  box.appendChild(lista);
+  function drawTrilhas(){
+    lista.innerHTML = '';
+    lista.appendChild(el('div', {class:'trilha-row trilha-head'}, [el('span',{},['Trilha']), el('span',{},['Nº de aulas']), el('span',{},['Horas pra produzir cada aula']), el('span',{},['Diluir em (meses)']), el('span')]));
+    cfg.trilhas.forEach((t, k) => {
+      const nome = el('input', {class:'inp text-left', value:t.nome||'', placeholder:'ex.: IA no seu negócio'});
+      nome.addEventListener('input', () => { t.nome = nome.value; });
+      lista.appendChild(el('div', {class:'trilha-row'}, [
+        nome,
+        numberInput({value:t.aulas, kind:'num', dec:0, onInput:(n)=>{ t.aulas=n; upd(); }}),
+        numberInput({value:t.horasAula, kind:'num', dec:1, onInput:(n)=>{ t.horasAula=n; upd(); }}),
+        numberInput({value:t.meses, kind:'num', dec:0, onInput:(n)=>{ t.meses=n; upd(); }}),
+        el('button', {class:'row-del', type:'button', title:'remover trilha', onclick:()=>{ cfg.trilhas.splice(k,1); drawTrilhas(); upd(); }}, ['✕']),
+      ]));
+    });
+    lista.appendChild(el('button', {class:'btn btn-secondary btn-sm', type:'button', style:'margin-top:4px;', onclick:()=>{
+      cfg.trilhas.push({nome:'', aulas:6, horasAula:2, meses:12}); drawTrilhas(); upd();
+    }}, ['+ Adicionar trilha']));
+  }
+  drawTrilhas();
+
+  box.appendChild(el('div', {class:'cat-title', style:'margin-top:14px;'}, ['Dia a dia da comunidade']));
+  box.appendChild(campo('Moderação e suporte (horas por semana)', 'Responder dúvidas, postar, animar a comunidade.', 'moderacaoSemana', 1));
+
+  const res = el('div', {class:'sem-conta'});
+  box.appendChild(res);
+  const aplicar = el('button', {class:'btn btn-primary', type:'button'}, ['Usar essas horas']);
+  box.appendChild(el('div', {style:'display:flex;justify-content:flex-end;gap:8px;margin-top:14px;'}, [
+    el('button', {class:'btn btn-secondary', type:'button', onclick:fechar}, ['Cancelar']), aplicar]));
+  function upd(){
+    const hrs = comunidadeHoras(cfg);
+    res.innerHTML = 'Por mês: <b>' + fmtNum(hrs.vivo,1) + ' h</b> de lives (' + fmtNum(hrs.lives,1) + ' lives) + <b>' + fmtNum(hrs.prep,1) + ' h</b> de preparação ('
+      + fmtNum(hrs.prepLives,1) + ' h das lives + ' + fmtNum(hrs.prepTrilhas,1) + ' h das trilhas) + <b>' + fmtNum(hrs.suporte,1) + ' h</b> de moderação = <b class="sem-res">'
+      + fmtNum(hrs.total,1) + ' horas por mês</b>.'
+      + (hrs.trilhas.length ? '<br><span class="help" style="margin:0;">' + hrs.trilhas.map(t => (t.nome||'Trilha') + ': ' + fmtNum(t.total,0) + ' h no total → ' + fmtNum(t.mes,1) + ' h/mês').join(' · ') + '</span>' : '');
+  }
+  aplicar.addEventListener('click', () => {
+    const hrs = comunidadeHoras(cfg);
+    r.comunidade = cfg;
+    r.horasVivoAluno = 0;
+    r.horasVivoGrupo = Math.round(hrs.vivo*10)/10;
+    r.horasPrep = Math.round(hrs.prep*10)/10;
+    r.horasSuporte = Math.round(hrs.suporte*10)/10;
+    r.frequencia = 1;
+    persist(); if (onDone) onDone(); fechar();
+  });
+  upd();
+  document.body.appendChild(overlay);
+}
+
+
+/* ===================== Cartões genéricos (Produto e Conhecimento) ===================== */
+// Peças reaproveitadas pelos dois modelos: pergunta, linha de detalhe, resultado.
+function cardQ(label, help, input){
+  return el('div', {class:'svc-q'}, [el('label', {}, [label, help ? el('div',{class:'help'},[help]) : null]), input]);
+}
+function cardDet(label, help, input){
+  return el('div', {class:'field-row'}, [el('label', {}, [label, help ? el('div',{class:'help'},[help]) : null]), input]);
+}
+function cardDiffHtml(dif, porMes, unidadeTxt){
+  if (dif > 0.5) return 'Você cobra <b>' + fmtBRL(dif) + ' a menos</b> que o preço certo' + (porMes > 0 ? ' — <b>' + fmtBRL(porMes) + ' por mês</b> que ficam na mesa.' : '.');
+  return '👍 Seu preço atual já cobre o preço certo' + (unidadeTxt ? ' ' + unidadeTxt : '') + '.';
+}
+
+/* ======================= PRODUTO FÍSICO (cartões) ======================= */
+
+function statusProduto(st){
+  if (st === 'otimo') return '🟢 Ótimo: o preço é 3× ou mais o custo.';
+  if (st === 'ok') return '🟡 OK: o preço é entre 2× e 3× o custo.';
+  if (st === 'baixo') return '🔴 Atenção: preço menor que 2× o custo — sobra pouco.';
+  return 'Preencha quantas unidades vende por mês pra ver o resultado.';
+}
+
+function buildCalcProduto(wrap, body){
+  const st = APP.state;
+  wrap.className = 'svc-wrap';
+  const $ = (id) => document.getElementById(id);
+  const setTxt = (id, t) => { const e = $(id); if (e) e.textContent = t; };
+  const calc = () => computeCalcAll('produto', st.calcular, computeHora('produto', st), st);
+  const list = el('div', {class:'svc-list'});
+  wrap.appendChild(list);
+
+  function rebuild(){ list.innerHTML = ''; st.calcular.forEach((r, i) => list.appendChild(card(r, i))); refreshAll(); }
+
+  function card(r, i){
+    const root = el('div', {class:'svc-card'});
+    const head = el('div', {class:'svc-head'});
+    const nome = el('input', {class:'inp text-left svc-nome', value:r.nome||'', placeholder:'nome do produto'});
+    nome.addEventListener('input', () => { r.nome = nome.value; delete r._example; persist(); });
+    head.appendChild(nome);
+    if (r._example) head.appendChild(exampleBadge());
+    head.appendChild(el('button', {class:'row-del', title:'remover produto', onclick:()=>{ st.calcular.splice(i,1); persist(); rebuild(); }}, ['✕']));
+    root.appendChild(head);
+
+    const cols = el('div', {class:'svc-cols'});
+    const qs = el('div', {class:'svc-qs'});
+    qs.appendChild(cardQ('Quantas unidades vende por mês?', null, numberInput({value:r.unidades, kind:'num', dec:0, onInput:(n)=>{ r.unidades=n; persist(); refreshAll(); }})));
+    qs.appendChild(cardQ('Tempo pra fazer 1 unidade (minutos)', 'Cortar, montar, embalar…', numberInput({value:Math.round(parseBR(r.tempo)*60), kind:'num', dec:0, onInput:(n)=>{ r.tempo = n/60; persist(); refreshAll(); }})));
+    const mp = el('div', {style:'display:flex;gap:6px;align-items:center;'});
+    const mpInp = numberInput({value:r.materiaPrima, kind:'brl', onInput:(n)=>{ r.materiaPrima=n; persist(); refreshAll(); }});
+    mp.appendChild(mpInp);
+    const calcBtn = el('button', {class:'btn-ghost btn-sm', type:'button', title:'somar a partir da matéria-prima', style:'padding:6px 8px;'}, ['🧮']);
+    calcBtn.addEventListener('click', (e) => openInsumoPopover(e.currentTarget, (total) => {
+      r.materiaPrima = total; persist(); mpInp.querySelector('input').value = fmtNum(total,2); refreshAll();
+    }));
+    mp.appendChild(calcBtn);
+    qs.appendChild(cardQ('Matéria-prima de 1 unidade (R$)', 'Use a 🧮 pra somar a partir da sua lista.', mp));
+    qs.appendChild(cardQ('Quanto você cobra hoje? (R$)', 'Deixe 0 se ainda não vende.', numberInput({value:r.cobraHoje||0, kind:'brl', onInput:(n)=>{ r.cobraHoje=n; persist(); refreshAll(); }})));
+    cols.appendChild(qs);
+
+    const res = el('div', {class:'svc-res'});
+    res.appendChild(el('div', {class:'svc-res-lbl'}, ['Preço de venda certo']));
+    res.appendChild(el('div', {class:'svc-res-val', id:'pd-preco-'+i}, ['']));
+    res.appendChild(el('div', {class:'svc-res-line'}, ['Custo total de 1 unidade: ', el('b', {id:'pd-custo-'+i, class:'mono'}, [''])]));
+    res.appendChild(el('div', {class:'svc-res-line'}, ['Receita no mês: ', el('b', {id:'pd-receita-'+i, class:'mono'}, [''])]));
+    res.appendChild(el('div', {class:'svc-status', id:'pd-status-'+i}, ['']));
+    res.appendChild(el('div', {class:'svc-diff', id:'pd-diff-'+i, style:'display:none;'}));
+    cols.appendChild(res);
+    root.appendChild(cols);
+
+    const det = el('details', {class:'svc-det'});
+    det.appendChild(el('summary', {}, ['Mais detalhes (embalagem, frete, impostos, margem…)']));
+    det.appendChild(cardDet('Embalagem por unidade (R$)', null, numberInput({value:r.embalagem||0, kind:'brl', onInput:(n)=>{ r.embalagem=n; persist(); refreshAll(); }})));
+    det.appendChild(cardDet('Frete por unidade (R$)', 'Se você paga o frete.', numberInput({value:r.frete||0, kind:'brl', onInput:(n)=>{ r.frete=n; persist(); refreshAll(); }})));
+    det.appendChild(cardDet('Outros custos por unidade (R$)', 'Etiqueta, brinde, tag…', numberInput({value:r.outros||0, kind:'brl', onInput:(n)=>{ r.outros=n; persist(); refreshAll(); }})));
+    det.appendChild(cardDet('Impostos', null, numberInput({value:r.impostos||0, kind:'pct', onInput:(n)=>{ r.impostos=n; persist(); refreshAll(); }})));
+    det.appendChild(cardDet('Comissão de venda', null, numberInput({value:r.comissao||0, kind:'pct', onInput:(n)=>{ r.comissao=n; persist(); refreshAll(); }})));
+    det.appendChild(cardDet('Taxa da plataforma / marketplace', 'Shopee, Mercado Livre, maquininha…', numberInput({value:r.plataforma||0, kind:'pct', onInput:(n)=>{ r.plataforma=n; persist(); refreshAll(); }})));
+    det.appendChild(cardDet('Margem de lucro desejada', 'Quanto DO PREÇO vira lucro.', numberInput({value:r.margem||0, kind:'pct', onInput:(n)=>{ r.margem=n; persist(); refreshAll(); }})));
+    const info = el('div', {class:'svc-info'});
+    [['Mão de obra','pd-mao-'],['Custo de produção','pd-custou-'],['Parte dos custos fixos','pd-rateio-'],['Markup','pd-markup-']].forEach(([l,id]) =>
+      info.appendChild(el('div', {}, [el('span', {class:'help', style:'margin:0;'}, [l]), el('b', {class:'mono', id:id+i}, [''])])));
+    det.appendChild(info);
+    root.appendChild(det);
+    return root;
+  }
+
+  const tot = el('div', {class:'svc-total'}, [
+    el('div', {}, [el('span',{class:'help',style:'margin:0;'},['Unidades no mês']), el('b',{id:'pd-tot-unid',class:'mono'},[''])]),
+    el('div', {}, [el('span',{class:'help',style:'margin:0;'},['Receita no mês']), el('b',{id:'pd-tot-receita',class:'mono'},[''])]),
+    el('div', {}, [el('span',{class:'help',style:'margin:0;'},['Lucro no mês']), el('b',{id:'pd-tot-lucro',class:'mono',style:'color:var(--green-strong);'},[''])]),
+    el('div', {id:'pd-tot-perda-box', style:'display:none;'}, [el('span',{class:'help',style:'margin:0;'},['Deixando na mesa por mês']), el('b',{id:'pd-tot-perda',class:'mono',style:'color:var(--red);'},[''])]),
+  ]);
+
+  function refreshAll(){
     const {rows, totals} = calc();
-    rows.forEach((r,i) => {
-      setTxt('c-htot-'+i, fmtNum(r._horasTotaisMes,2));
-      setTxt('c-haluno-'+i, fmtNum(r._horasPorAluno,2));
-      setTxt('c-ctempo-'+i, fmtBRL(r._custoTempo));
-      setTxt('c-ctotmes-'+i, fmtBRL(r._custoTotalMes));
-      setTxt('c-caluno-'+i, fmtBRL(r._custoPorAluno));
-      setTxt('c-preco-'+i, fmtBRL(r._precoCheio));
-      setTxt('c-promo-'+i, r._temPromo ? fmtBRL(r._precoPromo) + ' (' + r._alunosPromo + (r._alunosPromo === 1 ? ' aluno)' : ' alunos)') : '—');
-      setTxt('c-receita-'+i, fmtBRL(r._receita));
-      setTxt('c-receitames-'+i, fmtBRL(r._receitaMes));
-      setPill('c-status-'+i, r._status);
+    let perda = 0;
+    rows.forEach((c, i) => {
+      setTxt('pd-preco-'+i, c._preco ? fmtBRL(c._preco) : '—');
+      setTxt('pd-custo-'+i, fmtBRL(c._custoTotalUnitario));
+      setTxt('pd-receita-'+i, fmtBRL(parseBR(c.unidades) * c._preco));
+      setTxt('pd-status-'+i, statusProduto(c._status));
+      const se = $('pd-status-'+i); if (se) se.className = 'svc-status st-' + (c._status||'none');
+      setTxt('pd-mao-'+i, fmtBRL(c._maoObra));
+      setTxt('pd-custou-'+i, fmtBRL(c._custoUnitario));
+      setTxt('pd-rateio-'+i, fmtBRL(c._rateio));
+      setTxt('pd-markup-'+i, fmtNum(c._markup,2) + '×');
+      const d = $('pd-diff-'+i), hoje = parseBR(c.cobraHoje);
+      if (d){
+        if (hoje > 0 && c._preco > 0){
+          const dif = c._preco - hoje, mes = Math.max(0, dif) * parseBR(c.unidades);
+          if (dif > 0.5) perda += mes;
+          d.style.display = ''; d.className = 'svc-diff ' + (dif > 0.5 ? 'falta' : 'ok');
+          d.innerHTML = cardDiffHtml(dif, mes);
+        } else d.style.display = 'none';
+      }
     });
-    setTxt('c-tot-alunos', fmtNum(totals.alunos,1));
-    setTxt('c-tot-horas', fmtNum(totals.horas,2));
-    setTxt('c-tot-receita', fmtBRL(totals.receita));
-  }
-  function setTxt(id,t){ const e=document.getElementById(id); if(e) e.textContent=t; }
-  function setPill(id,status){ const e=document.getElementById(id); if(e){ e.innerHTML=''; e.appendChild(statusPillNode(status)); } }
-
-  function rebuild(){
-    tbody.innerHTML = '';
-    const {rows} = calc();
-    APP.state.calcular.forEach((r,i) => tbody.appendChild(buildRow(r,i,rows[i])));
-  }
-  function td(node){ const t = el('td'); t.appendChild(node); return t; }
-
-  function abrirComunidade(r){
-    const cfg = JSON.parse(JSON.stringify(r.comunidade || comunidadeDefault()));
-    const overlay = el('div', {class:'modal-overlay'});
-    const box = el('div', {class:'modal-box', role:'dialog', 'aria-label':'Montar comunidade'});
-    overlay.appendChild(box);
-    const onKey = (e) => { if (e.key === 'Escape') fechar(); };
-    const fechar = () => { overlay.remove(); document.removeEventListener('keydown', onKey); };
-    document.addEventListener('keydown', onKey);
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) fechar(); });
-    box.appendChild(el('div', {class:'modal-head'}, [el('h3', {}, ['Montar comunidade']),
-      el('button', {class:'row-del', type:'button', title:'fechar', onclick:fechar}, ['✕'])]));
-    box.appendChild(el('p', {class:'help', style:'margin:0 0 10px;'}, ['Conte o que acontece dentro da comunidade. O Precifica transforma tudo em horas por mês — e o preço sai por membro, por mês (assinatura).']));
-
-    const campo = (label, help, key, dec) => el('div', {class:'field-row'}, [
-      el('label', {}, [label, help ? el('div',{class:'help'},[help]) : null]),
-      numberInput({value:cfg[key], kind:'num', dec:dec, onInput:(n)=>{ cfg[key]=n; upd(); }}),
-    ]);
-    box.appendChild(el('div', {class:'cat-title'}, ['Lives com os inscritos']));
-    box.appendChild(campo('Lives por semana', null, 'livesSemana', 1));
-    box.appendChild(campo('Duração de cada live (horas)', null, 'duracaoLive', 1));
-    box.appendChild(campo('Preparação de cada live (horas)', 'Roteiro, slides, convidados.', 'prepLive', 1));
-
-    box.appendChild(el('div', {class:'cat-title', style:'margin-top:14px;'}, ['Trilhas de aulas gravadas']));
-    box.appendChild(el('p', {class:'help', style:'margin:0 0 6px;'}, ['O tempo de produzir cada trilha é diluído nos meses em que ela vai servir aos membros.']));
-    const lista = el('div');
-    box.appendChild(lista);
-    function drawTrilhas(){
-      lista.innerHTML = '';
-      lista.appendChild(el('div', {class:'trilha-row trilha-head'}, [el('span',{},['Trilha']), el('span',{},['Nº de aulas']), el('span',{},['Horas pra produzir cada aula']), el('span',{},['Diluir em (meses)']), el('span')]));
-      cfg.trilhas.forEach((t, k) => {
-        const nome = el('input', {class:'inp text-left', value:t.nome||'', placeholder:'ex.: IA no seu negócio'});
-        nome.addEventListener('input', () => { t.nome = nome.value; });
-        lista.appendChild(el('div', {class:'trilha-row'}, [
-          nome,
-          numberInput({value:t.aulas, kind:'num', dec:0, onInput:(n)=>{ t.aulas=n; upd(); }}),
-          numberInput({value:t.horasAula, kind:'num', dec:1, onInput:(n)=>{ t.horasAula=n; upd(); }}),
-          numberInput({value:t.meses, kind:'num', dec:0, onInput:(n)=>{ t.meses=n; upd(); }}),
-          el('button', {class:'row-del', type:'button', title:'remover trilha', onclick:()=>{ cfg.trilhas.splice(k,1); drawTrilhas(); upd(); }}, ['✕']),
-        ]));
-      });
-      lista.appendChild(el('button', {class:'btn btn-secondary btn-sm', type:'button', style:'margin-top:4px;', onclick:()=>{
-        cfg.trilhas.push({nome:'', aulas:6, horasAula:2, meses:12}); drawTrilhas(); upd();
-      }}, ['+ Adicionar trilha']));
-    }
-    drawTrilhas();
-
-    box.appendChild(el('div', {class:'cat-title', style:'margin-top:14px;'}, ['Dia a dia da comunidade']));
-    box.appendChild(campo('Moderação e suporte (horas por semana)', 'Responder dúvidas, postar, animar a comunidade.', 'moderacaoSemana', 1));
-
-    const res = el('div', {class:'sem-conta'});
-    box.appendChild(res);
-    const aplicar = el('button', {class:'btn btn-primary', type:'button'}, ['Usar essas horas']);
-    box.appendChild(el('div', {style:'display:flex;justify-content:flex-end;gap:8px;margin-top:14px;'}, [
-      el('button', {class:'btn btn-secondary', type:'button', onclick:fechar}, ['Cancelar']), aplicar]));
-    function upd(){
-      const hrs = comunidadeHoras(cfg);
-      res.innerHTML = 'Por mês: <b>' + fmtNum(hrs.vivo,1) + ' h</b> de lives (' + fmtNum(hrs.lives,1) + ' lives) + <b>' + fmtNum(hrs.prep,1) + ' h</b> de preparação ('
-        + fmtNum(hrs.prepLives,1) + ' h das lives + ' + fmtNum(hrs.prepTrilhas,1) + ' h das trilhas) + <b>' + fmtNum(hrs.suporte,1) + ' h</b> de moderação = <b class="sem-res">'
-        + fmtNum(hrs.total,1) + ' horas por mês</b>.'
-        + (hrs.trilhas.length ? '<br><span class="help" style="margin:0;">' + hrs.trilhas.map(t => (t.nome||'Trilha') + ': ' + fmtNum(t.total,0) + ' h no total → ' + fmtNum(t.mes,1) + ' h/mês').join(' · ') + '</span>' : '');
-    }
-    aplicar.addEventListener('click', () => {
-      const hrs = comunidadeHoras(cfg);
-      r.comunidade = cfg;
-      r.horasVivoAluno = 0;
-      r.horasVivoGrupo = Math.round(hrs.vivo*10)/10;
-      r.horasPrep = Math.round(hrs.prep*10)/10;
-      r.horasSuporte = Math.round(hrs.suporte*10)/10;
-      r.frequencia = 1;
-      persist(); rebuild(); refresh(); fechar();
-    });
-    upd();
-    document.body.appendChild(overlay);
+    setTxt('pd-tot-unid', fmtNum(totals.unidades, 0));
+    setTxt('pd-tot-receita', fmtBRL(totals.receita));
+    setTxt('pd-tot-lucro', fmtBRL(totals.lucroLiquido));
+    const pb = $('pd-tot-perda-box'); if (pb) pb.style.display = perda > 0 ? '' : 'none';
+    setTxt('pd-tot-perda', fmtBRL(perda));
   }
 
-  function buildRow(r, i, computed){
-    const tr = el('tr');
-    const nameTd = el('td', {class:'col-name'});
-    const nameInp = el('input', {class:'inp text-left', value:r.nome||''});
-    nameInp.addEventListener('input', () => { r.nome = nameInp.value; persist(); });
-    nameTd.appendChild(nameInp);
-    if (r._example) nameTd.appendChild(exampleBadge());
-    if (r.modalidade === 'COMUNIDADE'){
-      const n = (r.comunidade && r.comunidade.trilhas || []).length;
-      nameTd.appendChild(el('button', {type:'button', class:'det-toggle', style:'display:block;', onclick:()=>abrirComunidade(r)},
-        ['🧩 Montar comunidade' + (r.comunidade ? ' (' + n + (n===1?' trilha':' trilhas') + ')' : '')]));
-    }
-    tr.appendChild(nameTd);
-
-    const modTd = el('td');
-    const sel = el('select', {class:'inp'});
-    MODALIDADES.forEach(mo => sel.appendChild(el('option', {value:mo, selected: mo===r.modalidade ? 'selected' : null}, [mo])));
-    modTd.appendChild(sel);
-    tr.appendChild(modTd);
-
-    const freqTd = el('td');
-    const fsel = el('select', {class:'inp'});
-    const fAtual = Math.max(1, parseBR(r.frequencia) || 1);
-    FREQUENCIAS.forEach(([n, l]) => fsel.appendChild(el('option', {value:String(n), selected: n===fAtual ? 'selected' : null}, [l])));
-    fsel.addEventListener('change', () => { r.frequencia = Number(fsel.value); persist(); refresh(); });
-    freqTd.appendChild(fsel);
-    tr.appendChild(freqTd);
-    sel.addEventListener('change', () => {
-      r.modalidade = sel.value;
-      // evento costuma ser periódico: sugere trimestral se ainda estava "todo mês"
-      if (r.modalidade === 'EVENTO' && !(parseBR(r.frequencia) > 1)){ r.frequencia = 3; fsel.value = '3'; refresh(); }
-      if (r.modalidade === 'COMUNIDADE'){ r.frequencia = 1; persist(); rebuild(); refresh(); abrirComunidade(r); return; }
-      persist(); rebuild(); refresh();
-    });
-
-    tr.appendChild(td(numberInput({value:r.alunos, kind:'num', dec:0, onInput:(n)=>{r.alunos=n;persist();refresh();}})));
-    tr.appendChild(td(numberInput({value:r.duracao, kind:'num', dec:0, onInput:(n)=>{r.duracao=n;persist();}})));
-    tr.appendChild(td(numberInput({value:r.horasVivoAluno, kind:'num', dec:2, onInput:(n)=>{r.horasVivoAluno=n;persist();refresh();}})));
-    tr.appendChild(td(numberInput({value:r.horasVivoGrupo, kind:'num', dec:2, onInput:(n)=>{r.horasVivoGrupo=n;persist();refresh();}})));
-    tr.appendChild(td(numberInput({value:r.horasPrep, kind:'num', dec:2, onInput:(n)=>{r.horasPrep=n;persist();refresh();}})));
-    tr.appendChild(td(numberInput({value:r.horasSuporte, kind:'num', dec:2, onInput:(n)=>{r.horasSuporte=n;persist();refresh();}})));
-    tr.appendChild(td(lockedOut('c-htot-'+i, fmtNum(computed._horasTotaisMes,2))));
-    tr.appendChild(td(lockedOut('c-haluno-'+i, fmtNum(computed._horasPorAluno,2))));
-    tr.appendChild(td(numberInput({value:r.custoMaterial, kind:'brl', onInput:(n)=>{r.custoMaterial=n;persist();refresh();}})));
-    tr.appendChild(td(numberInput({value:r.custoFixoPrograma, kind:'brl', onInput:(n)=>{r.custoFixoPrograma=n;persist();refresh();}})));
-    tr.appendChild(td(lockedOut('c-ctempo-'+i, fmtBRL(computed._custoTempo))));
-    tr.appendChild(td(lockedOut('c-ctotmes-'+i, fmtBRL(computed._custoTotalMes))));
-    tr.appendChild(td(lockedOut('c-caluno-'+i, fmtBRL(computed._custoPorAluno))));
-    tr.appendChild(td(numberInput({value:r.plataforma, kind:'pct', onInput:(n)=>{r.plataforma=n;persist();refresh();}})));
-    tr.appendChild(td(numberInput({value:r.afiliados, kind:'pct', onInput:(n)=>{r.afiliados=n;persist();refresh();}})));
-    tr.appendChild(td(numberInput({value:r.impostos, kind:'pct', onInput:(n)=>{r.impostos=n;persist();refresh();}})));
-    tr.appendChild(td(numberInput({value:r.margem, kind:'pct', onInput:(n)=>{r.margem=n;persist();refresh();}})));
-    tr.appendChild(td(numberInput({value:r.descontoPromo||0, kind:'pct', onInput:(n)=>{r.descontoPromo=n;persist();refresh();}})));
-    tr.appendChild(td(numberInput({value:r.pctPromo||0, kind:'pct', onInput:(n)=>{r.pctPromo=n;persist();refresh();}})));
-    tr.appendChild(td(resultOut('c-preco-'+i, fmtBRL(computed._precoCheio))));
-    tr.appendChild(td(lockedOut('c-promo-'+i, computed._temPromo ? fmtBRL(computed._precoPromo) : '—')));
-    tr.appendChild(td(lockedOut('c-receita-'+i, fmtBRL(computed._receita))));
-    tr.appendChild(td(resultOut('c-receitames-'+i, fmtBRL(computed._receitaMes))));
-    const statusTd = el('td', {id:'c-status-'+i}); statusTd.appendChild(statusPillNode(computed._status)); tr.appendChild(statusTd);
-    const delTd = el('td');
-    delTd.appendChild(el('button', {class:'row-del', onclick:()=>{ APP.state.calcular.splice(i,1); persist(); rebuild(); refresh(); }}, ['✕']));
-    tr.appendChild(delTd);
-    return tr;
-  }
-
-  rebuild();
-  wrap.appendChild(table);
-  const initTotals = calc().totals;
-  const tfoot = el('tfoot', {}, [el('tr', {}, [
-    el('td', {style:'font-weight:800;'}, ['MÉDIA POR MÊS']), el('td'), el('td'),
-    el('td', {}, [lockedOut('c-tot-alunos',fmtNum(initTotals.alunos,1))]), el('td'), el('td'), el('td'), el('td'), el('td'),
-    el('td', {}, [lockedOut('c-tot-horas',fmtNum(initTotals.horas,2))]),
-    el('td'), el('td'), el('td'), el('td'), el('td'), el('td'), el('td'), el('td'), el('td'), el('td'), el('td'), el('td'), el('td'), el('td'),
-    el('td', {}, [resultOut('c-tot-receita',fmtBRL(initTotals.receita))]), el('td'), el('td'),
-  ])]);
-  table.appendChild(tfoot);
-
-  body.appendChild(addRowBtn('adicionar oferta', () => {
-    APP.state.calcular.push({nome:'', modalidade:'1:1', frequencia:1, alunos:0, duracao:1, horasVivoAluno:0, horasVivoGrupo:0, horasPrep:0, horasSuporte:0,
-      custoMaterial:0, custoFixoPrograma:0, plataforma:0, afiliados:0, impostos:.06, margem:.4, descontoPromo:0, pctPromo:0});
-    persist(); rebuild(); refresh();
-  }));
+  wrap.appendChild(el('div', {class:'svc-add'}, [el('button', {class:'btn btn-primary btn-sm', type:'button', onclick:()=>{
+    st.calcular.push({nome:'', unidades:0, materiaPrima:0, tempo:0, embalagem:0, frete:0, outros:0, impostos:.06, comissao:.1, plataforma:.05, margem:.4, cobraHoje:0});
+    persist(); rebuild();
+  }}, ['+ Adicionar produto'])]));
+  wrap.appendChild(tot);
   body.appendChild(el('ul', {class:'note-list', style:'margin-top:16px;'}, [
-    el('li', {}, ['1:1 → horas ao vivo por aluno. Ex.: mentoria individual 1h/semana = 4h/mês.']),
-    el('li', {}, ['GRUPO → horas ao vivo em grupo (não multiplica por aluno). Ex.: 4 encontros de 1h = 4h/mês.']),
-    el('li', {}, ['GRAVADO → deixe as horas ao vivo em 0. Só preparação e suporte contam. Alunos = quantos compram por mês.']),
-    el('li', {}, ['COMUNIDADE (assinatura) → clique em "🧩 Montar comunidade" e informe as lives semanais, as trilhas de aulas gravadas (ex.: IA no seu negócio, Gestão de negócio) e as horas de moderação. Alunos = membros ativos pagando por mês. O preço sai por membro, por mês.']),
-    el('li', {}, ['EVENTO (workshop, imersão, evento presencial) → em "Acontece", escolha a frequência: trimestral, semestral, anual… Preencha tudo POR EDIÇÃO: participantes, horas do evento, preparação, custo fixo (local, coffee, equipe) e custo por participante. O preço sai por participante e a receita é dividida pelos meses, pra comparar com sua meta mensal.']),
-    el('li', {}, ['Taxa plataforma: Hotmart/Kiwify ≈ 10%. Venda direta (Pix) = 0%.']),
-    el('li', {}, ['Lote promocional (primeiros inscritos, pré-venda, cupom): informe o desconto e quantos % dos alunos vão comprar com ele. O preço cheio sobe o necessário pra que, na média, a receita continue cobrindo seus custos e sua margem. Ex.: 30% dos alunos com 20% de desconto → preço cheio 6,4% maior.']),
+    el('li', {}, ['O preço certo cobre matéria-prima, mão de obra, embalagem, frete, a sua parte dos custos fixos, impostos e taxas — e ainda deixa a margem que você escolheu.']),
+    el('li', {}, ['Vende em marketplace (Shopee, Mercado Livre)? Coloque a taxa deles em "Mais detalhes → Taxa da plataforma".']),
+  ]));
+  rebuild();  requestAnimationFrame(refreshAll); // os elementos só existem na página depois do render
+}
+
+/* ======================= PROFISSIONAL DO CONHECIMENTO (cartões) ======================= */
+
+function statusConhecimento(st){
+  if (st === 'gravado') return '🎬 Gravado: não usa horas ao vivo — escala sem gastar seu tempo.';
+  if (st === 'otimo') return '🟢 Ótimo: cada hora sua rende bem mais que o custo dela.';
+  if (st === 'ok') return '🟡 OK: paga o seu tempo, mas sobra pouco.';
+  if (st === 'baixo') return '🔴 Atenção: o lucro por hora não paga nem o custo da sua hora.';
+  return 'Preencha quantos alunos por turma pra ver o resultado.';
+}
+
+function buildCalcConhecimento(wrap, body){
+  const st = APP.state;
+  wrap.className = 'svc-wrap';
+  const $ = (id) => document.getElementById(id);
+  const setTxt = (id, t) => { const e = $(id); if (e) e.textContent = t; };
+  const calc = () => computeCalcAll('conhecimento', st.calcular, computeHora('conhecimento', st), st);
+  const list = el('div', {class:'svc-list'});
+  wrap.appendChild(list);
+
+  function rebuild(){ list.innerHTML = ''; st.calcular.forEach((r, i) => list.appendChild(card(r, i))); refreshAll(); }
+
+  function card(r, i){
+    const root = el('div', {class:'svc-card'});
+    const head = el('div', {class:'svc-head'});
+    const nome = el('input', {class:'inp text-left svc-nome', value:r.nome||'', placeholder:'nome da oferta'});
+    nome.addEventListener('input', () => { r.nome = nome.value; delete r._example; persist(); });
+    head.appendChild(nome);
+    if (r._example) head.appendChild(exampleBadge());
+    head.appendChild(el('button', {class:'row-del', title:'remover oferta', onclick:()=>{ st.calcular.splice(i,1); persist(); rebuild(); }}, ['✕']));
+    root.appendChild(head);
+
+    const cols = el('div', {class:'svc-cols'});
+    const qs = el('div', {class:'svc-qs'});
+    const mod = el('select', {class:'inp'});
+    const NOMES_MOD = {'1:1':'Individual (1:1)', 'GRUPO':'Em grupo', 'GRAVADO':'Curso gravado', 'MISTO':'Misto (grupo + individual)', 'EVENTO':'Evento / workshop', 'COMUNIDADE':'Comunidade (assinatura)'};
+    MODALIDADES.forEach(mo => mod.appendChild(el('option', {value:mo, selected: mo===r.modalidade ? 'selected' : null}, [NOMES_MOD[mo] || mo])));
+    mod.addEventListener('change', () => {
+      r.modalidade = mod.value;
+      if (r.modalidade === 'EVENTO' && !(parseBR(r.frequencia) > 1)) r.frequencia = 3;
+      if (r.modalidade === 'COMUNIDADE'){ r.frequencia = 1; persist(); rebuild(); abrirComunidade(r, rebuild); return; }
+      persist(); rebuild();
+    });
+    qs.appendChild(cardQ('Formato', null, mod));
+    const freq = el('select', {class:'inp'});
+    const fAtual = Math.max(1, parseBR(r.frequencia) || 1);
+    FREQUENCIAS.forEach(([n, l]) => freq.appendChild(el('option', {value:String(n), selected: n===fAtual ? 'selected' : null}, [l])));
+    freq.addEventListener('change', () => { r.frequencia = Number(freq.value); persist(); refreshAll(); });
+    if (r.modalidade !== 'COMUNIDADE') qs.appendChild(cardQ('Acontece', null, freq));
+    const comunidade = r.modalidade === 'COMUNIDADE';
+    qs.appendChild(cardQ(comunidade ? 'Membros pagantes por mês' : 'Alunos por turma / edição', null,
+      numberInput({value:r.alunos, kind:'num', dec:0, onInput:(n)=>{ r.alunos=n; persist(); refreshAll(); }})));
+    // horas: o que aparece depende do formato
+    const mo = r.modalidade;
+    if (comunidade){
+      const n = (r.comunidade && r.comunidade.trilhas || []).length;
+      qs.appendChild(cardQ('Lives, trilhas e moderação', null, el('button', {class:'btn btn-secondary btn-sm', type:'button', onclick:()=>abrirComunidade(r, rebuild)},
+        ['🧩 Montar comunidade' + (r.comunidade ? ' (' + n + (n===1?' trilha':' trilhas') + ')' : '')])));
+    } else {
+      if (mo === '1:1' || mo === 'MISTO') qs.appendChild(cardQ('Horas ao vivo por aluno (na edição)', mo === '1:1' ? 'Ex.: 1h por semana em 1 mês = 4h.' : 'A parte individual.', numberInput({value:r.horasVivoAluno, kind:'num', dec:1, onInput:(n)=>{ r.horasVivoAluno=n; persist(); refreshAll(); }})));
+      if (mo === 'GRUPO' || mo === 'MISTO' || mo === 'EVENTO') qs.appendChild(cardQ(mo === 'EVENTO' ? 'Horas do evento' : 'Horas ao vivo com a turma', 'Não multiplica por aluno.', numberInput({value:r.horasVivoGrupo, kind:'num', dec:1, onInput:(n)=>{ r.horasVivoGrupo=n; persist(); refreshAll(); }})));
+      qs.appendChild(cardQ('Horas de preparação', mo === 'GRAVADO' ? 'Gravar, editar, atualizar (no mês).' : 'Roteiro, material, organização.', numberInput({value:r.horasPrep, kind:'num', dec:1, onInput:(n)=>{ r.horasPrep=n; persist(); refreshAll(); }})));
+    }
+    qs.appendChild(cardQ(comunidade ? 'Quanto cobra hoje por mês? (R$)' : 'Quanto você cobra hoje? (R$)', 'Por aluno. Deixe 0 se ainda não vende.', numberInput({value:r.cobraHoje||0, kind:'brl', onInput:(n)=>{ r.cobraHoje=n; persist(); refreshAll(); }})));
+    cols.appendChild(qs);
+
+    const res = el('div', {class:'svc-res'});
+    res.appendChild(el('div', {class:'svc-res-lbl'}, [comunidade ? 'Preço certo por membro, por mês' : 'Preço certo por aluno']));
+    res.appendChild(el('div', {class:'svc-res-val', id:'cn-preco-'+i}, ['']));
+    res.appendChild(el('div', {class:'help', id:'cn-promo-'+i, style:'margin:-2px 0 6px;'}, ['']));
+    res.appendChild(el('div', {class:'svc-res-line', id:'cn-receita-'+i}, ['']));
+    res.appendChild(el('div', {class:'svc-res-line'}, ['Suas horas no mês: ', el('b', {id:'cn-horas-'+i, class:'mono'}, [''])]));
+    res.appendChild(el('div', {class:'svc-status', id:'cn-status-'+i}, ['']));
+    res.appendChild(el('div', {class:'svc-diff', id:'cn-diff-'+i, style:'display:none;'}));
+    cols.appendChild(res);
+    root.appendChild(cols);
+
+    const det = el('details', {class:'svc-det'});
+    det.appendChild(el('summary', {}, ['Mais detalhes (custos, taxas, margem, lote promocional…)']));
+    if (!comunidade) det.appendChild(cardDet('Horas de suporte', 'Tirar dúvidas, corrigir tarefas, grupo de WhatsApp.', numberInput({value:r.horasSuporte, kind:'num', dec:1, onInput:(n)=>{ r.horasSuporte=n; persist(); refreshAll(); }})));
+    det.appendChild(cardDet('Duração (meses)', 'Quanto tempo o aluno fica no programa. Só informativo.', numberInput({value:r.duracao, kind:'num', dec:0, onInput:(n)=>{ r.duracao=n; persist(); }})));
+    det.appendChild(cardDet('Custo por aluno (R$)', 'Material, kit, apostila impressa…', numberInput({value:r.custoMaterial||0, kind:'brl', onInput:(n)=>{ r.custoMaterial=n; persist(); refreshAll(); }})));
+    det.appendChild(cardDet('Custo fixo por edição (R$)', 'Local, coffee, equipe, ferramentas só deste programa.', numberInput({value:r.custoFixoPrograma||0, kind:'brl', onInput:(n)=>{ r.custoFixoPrograma=n; persist(); refreshAll(); }})));
+    det.appendChild(cardDet('Taxa da plataforma', 'Hotmart/Kiwify ≈ 10%. Pix direto = 0%.', numberInput({value:r.plataforma||0, kind:'pct', onInput:(n)=>{ r.plataforma=n; persist(); refreshAll(); }})));
+    det.appendChild(cardDet('Comissão de afiliados', null, numberInput({value:r.afiliados||0, kind:'pct', onInput:(n)=>{ r.afiliados=n; persist(); refreshAll(); }})));
+    det.appendChild(cardDet('Impostos', null, numberInput({value:r.impostos||0, kind:'pct', onInput:(n)=>{ r.impostos=n; persist(); refreshAll(); }})));
+    det.appendChild(cardDet('Margem de lucro desejada', 'Quanto DO PREÇO vira lucro.', numberInput({value:r.margem||0, kind:'pct', onInput:(n)=>{ r.margem=n; persist(); refreshAll(); }})));
+    det.appendChild(el('div', {class:'cat-title', style:'margin-top:10px;'}, ['Lote promocional (primeiros inscritos, pré-venda, cupom)']));
+    det.appendChild(cardDet('Desconto do lote', null, numberInput({value:r.descontoPromo||0, kind:'pct', onInput:(n)=>{ r.descontoPromo=n; persist(); refreshAll(); }})));
+    det.appendChild(cardDet('% dos alunos que compram no lote', 'O preço cheio sobe o necessário pra compensar.', numberInput({value:r.pctPromo||0, kind:'pct', onInput:(n)=>{ r.pctPromo=n; persist(); refreshAll(); }})));
+    const info = el('div', {class:'svc-info'});
+    [['Custo do seu tempo (edição)','cn-ctempo-'],['Custo total (edição)','cn-ctot-'],['Custo por aluno','cn-caluno-'],['Receita por edição','cn-redicao-']].forEach(([l,id]) =>
+      info.appendChild(el('div', {}, [el('span', {class:'help', style:'margin:0;'}, [l]), el('b', {class:'mono', id:id+i}, [''])])));
+    det.appendChild(info);
+    root.appendChild(det);
+    return root;
+  }
+
+  const horaC0 = computeHora('conhecimento', st);
+  const tot = el('div', {class:'svc-total'}, [
+    el('div', {}, [el('span',{class:'help',style:'margin:0;'},['Alunos por mês (média)']), el('b',{id:'cn-tot-alunos',class:'mono'},[''])]),
+    el('div', {}, [el('span',{class:'help',style:'margin:0;'},['Suas horas por mês']), el('b',{id:'cn-tot-horas',class:'mono'},[''])]),
+    el('div', {}, [el('span',{class:'help',style:'margin:0;'},['Receita por mês (média)']), el('b',{id:'cn-tot-receita',class:'mono'},[''])]),
+    el('div', {}, [el('span',{class:'help',style:'margin:0;'},['Lucro por mês (média)']), el('b',{id:'cn-tot-lucro',class:'mono',style:'color:var(--green-strong);'},[''])]),
+    el('div', {id:'cn-tot-perda-box', style:'display:none;'}, [el('span',{class:'help',style:'margin:0;'},['Deixando na mesa por mês']), el('b',{id:'cn-tot-perda',class:'mono',style:'color:var(--red);'},[''])]),
+  ]);
+
+  function refreshAll(){
+    const {rows, totals} = calc();
+    let perda = 0;
+    rows.forEach((c, i) => {
+      const freq = c._freq || 1;
+      setTxt('cn-preco-'+i, c._precoCheio ? fmtBRL(c._precoCheio) : '—');
+      setTxt('cn-promo-'+i, c._temPromo ? 'Lote promocional: ' + fmtBRL(c._precoPromo) + ' (' + c._alunosPromo + (c._alunosPromo===1?' aluno':' alunos') + ')' : '');
+      const rl = $('cn-receita-'+i);
+      if (rl) rl.innerHTML = freq > 1
+        ? 'Receita por edição: <b class="mono">' + fmtBRL(c._receita) + '</b> → <b class="mono">' + fmtBRL(c._receitaMes) + '</b> por mês (média)'
+        : 'Receita no mês: <b class="mono">' + fmtBRL(c._receitaMes) + '</b>';
+      setTxt('cn-horas-'+i, fmtNum(c._horasMes, 1) + ' h');
+      setTxt('cn-status-'+i, statusConhecimento(c._status));
+      const se = $('cn-status-'+i); if (se) se.className = 'svc-status st-' + (c._status||'none');
+      setTxt('cn-ctempo-'+i, fmtBRL(c._custoTempo));
+      setTxt('cn-ctot-'+i, fmtBRL(c._custoTotalMes));
+      setTxt('cn-caluno-'+i, fmtBRL(c._custoPorAluno));
+      setTxt('cn-redicao-'+i, fmtBRL(c._receita));
+      const d = $('cn-diff-'+i), hoje = parseBR(c.cobraHoje);
+      if (d){
+        if (hoje > 0 && c._preco > 0){
+          const dif = c._preco - hoje, mes = Math.max(0, dif) * c._alunosMes;
+          if (dif > 0.5) perda += mes;
+          d.style.display = ''; d.className = 'svc-diff ' + (dif > 0.5 ? 'falta' : 'ok');
+          d.innerHTML = cardDiffHtml(dif, mes);
+        } else d.style.display = 'none';
+      }
+    });
+    setTxt('cn-tot-alunos', fmtNum(totals.alunos, 1));
+    setTxt('cn-tot-horas', fmtNum(totals.horas, 1) + ' h de ' + fmtNum(horaC0.horasProdutivasMes || 0, 0) + ' h produtivas');
+    setTxt('cn-tot-receita', fmtBRL(totals.receita));
+    setTxt('cn-tot-lucro', fmtBRL(totals.lucroLiquido));
+    const pb = $('cn-tot-perda-box'); if (pb) pb.style.display = perda > 0 ? '' : 'none';
+    setTxt('cn-tot-perda', fmtBRL(perda));
+  }
+
+  wrap.appendChild(el('div', {class:'svc-add'}, [el('button', {class:'btn btn-primary btn-sm', type:'button', onclick:()=>{
+    st.calcular.push({nome:'', modalidade:'GRUPO', frequencia:1, alunos:0, duracao:1, horasVivoAluno:0, horasVivoGrupo:0, horasPrep:0, horasSuporte:0,
+      custoMaterial:0, custoFixoPrograma:0, plataforma:0, afiliados:0, impostos:.06, margem:.4, descontoPromo:0, pctPromo:0, cobraHoje:0});
+    persist(); rebuild();
+  }}, ['+ Adicionar oferta'])]));
+  wrap.appendChild(tot);
+  body.appendChild(el('ul', {class:'note-list', style:'margin-top:16px;'}, [
+    el('li', {}, ['Cada cartão é UMA turma/edição. Em "Acontece", diga a frequência (todo mês, trimestral, anual…) — a receita é dividida pelos meses pra comparar com a sua meta.']),
+    el('li', {}, ['Comunidade (assinatura): clique em "🧩 Montar comunidade" e informe lives semanais, trilhas de aulas gravadas e moderação. O preço sai por membro, por mês.']),
     el('li', {}, ['O preço garante sua margem. Se o mercado não paga, o ajuste é posicionamento, público ou formato — não rebaixar preço.']),
   ]));
+  rebuild();  requestAnimationFrame(refreshAll); // os elementos só existem na página depois do render
 }
+
 /* ---------------------------------------------------------------------- */
 /* Etapa: Resumo                                                          */
 /* ---------------------------------------------------------------------- */
@@ -2784,12 +2931,78 @@ function metaTiles(grid, r){
   }
 }
 
+// Linhas de preço de cada modelo (pro PDF e pra mensagem de aplicação).
+function linhasPreco(model, r){
+  return (r.calc.rows || []).filter(c => c.nome).map(c => {
+    const certo = model === 'prestador' ? c._precoParticular : (model === 'conhecimento' ? c._precoCheio : c._preco);
+    return {nome:c.nome, certo, hoje: parseBR(c.cobraHoje)||0};
+  }).filter(l => l.certo > 0);
+}
+function textoNumeros(model, r){
+  const linhas = linhasPreco(model, r).slice(0, 8).map(l => '- ' + l.nome + ': preço certo ' + fmtBRL(l.certo) + (l.hoje ? ' (cobro ' + fmtBRL(l.hoje) + ')' : ''));
+  return 'Modelo: ' + MODELS[model].label + '\nMeta de lucro: ' + fmtBRL(r.meta) + '/mês\nLíquido projetado: ' + fmtBRL(r.liquido) + '/mês'
+    + (r.perdaMensal > 0 ? '\nDeixando na mesa: ' + fmtBRL(r.perdaMensal) + '/mês' : '') + (linhas.length ? '\n' + linhas.join('\n') : '');
+}
+// Topo do Resumo: o número que importa, a aplicação e o PDF.
+function resumoHero(model, r){
+  const box = el('div', {class:'resumo-hero'});
+  if (r.perdaMensal > 0){
+    box.classList.add('perda');
+    box.appendChild(el('div', {class:'lbl'}, ['💸 Você está deixando na mesa']));
+    box.appendChild(el('div', {class:'val'}, [fmtBRL(r.perdaMensal)]));
+    box.appendChild(el('div', {class:'lbl'}, ['por mês — ' + fmtBRL(r.perdaMensal * 12) + ' por ano, cobrando abaixo do preço certo.']));
+  } else if (!r.bateMeta){
+    box.classList.add('perda');
+    box.appendChild(el('div', {class:'lbl'}, ['Faltam']));
+    box.appendChild(el('div', {class:'val'}, [fmtBRL(r.diff)]));
+    box.appendChild(el('div', {class:'lbl'}, ['por mês pra chegar na sua meta. Dica: preencha "Quanto você cobra hoje" nos ' + MODELS[model].calcTitle.toLowerCase() + ' pra ver quanto está deixando na mesa.']));
+  } else {
+    box.classList.add('ok');
+    box.appendChild(el('div', {class:'lbl'}, ['✅ Seus preços batem a meta']));
+    box.appendChild(el('div', {class:'val'}, ['+' + fmtBRL(r.diff)]));
+    box.appendChild(el('div', {class:'lbl'}, ['por mês além do que você precisa.']));
+  }
+  box.appendChild(el('div', {class:'resumo-hero-btns'}, [
+    el('button', {class:'btn btn-primary', type:'button', onclick:()=>aplicarDentistaCEO(textoNumeros(model, r))}, ['Quero ajuda pra crescer → aplicar para o DentistaCEO']),
+    el('button', {class:'btn btn-secondary', type:'button', onclick:()=>imprimirResumo(model, r)}, ['📄 Baixar PDF (1 página)']),
+  ]));
+  return box;
+}
+// PDF: monta uma folha só com o essencial e abre a impressão do navegador ("Salvar como PDF").
+function imprimirResumo(model, r){
+  const old = document.getElementById('print-sheet'); if (old) old.remove();
+  const sheet = el('div', {id:'print-sheet'});
+  const hoje = new Date().toLocaleDateString('pt-BR');
+  sheet.appendChild(el('div', {class:'ps-head'}, [el('b', {}, ['Precifica · Método 4C']), el('span', {}, [MODELS[model].label + ' · ' + hoje])]));
+  sheet.appendChild(el('h1', {}, ['A foto do meu negócio']));
+  const kpis = [['Meta de lucro (mês)', fmtBRL(r.meta)], ['Receita projetada (mês)', fmtBRL(r.receita)], ['Líquido que sobra (mês)', fmtBRL(r.liquido)]];
+  if (r.custoHora) kpis.push(['Custo da hora', fmtBRL(r.custoHora)]);
+  if (r.perdaMensal > 0) kpis.push(['Deixando na mesa (mês)', fmtBRL(r.perdaMensal)]);
+  sheet.appendChild(el('div', {class:'ps-kpis'}, kpis.map(([l,v]) => el('div', {}, [el('span', {}, [l]), el('b', {}, [v])]))));
+  sheet.appendChild(el('p', {class:'ps-verdict'}, [r.bateMeta ? '✅ Bate a meta — sobra ' + fmtBRL(r.diff) + ' por mês.' : '❌ Ainda não bate a meta — faltam ' + fmtBRL(r.diff) + ' por mês.']));
+  const linhas = linhasPreco(model, r);
+  if (linhas.length){
+    const t = el('table', {}, [el('thead', {}, [el('tr', {}, [el('th', {}, [MODELS[model].calcRowNoun.replace(/^./, c => c.toUpperCase())]), el('th', {}, ['Preço certo']), el('th', {}, ['Cobro hoje']), el('th', {}, ['Diferença'])])])]);
+    const tb = el('tbody');
+    linhas.forEach(l => tb.appendChild(el('tr', {}, [el('td', {}, [l.nome]), el('td', {}, [fmtBRL(l.certo)]), el('td', {}, [l.hoje ? fmtBRL(l.hoje) : '—']), el('td', {}, [l.hoje ? fmtBRL(l.certo - l.hoje) : '—'])])));
+    t.appendChild(tb);
+    sheet.appendChild(t);
+  }
+  sheet.appendChild(el('p', {class:'ps-foot'}, ['Preço certo = cobre seu tempo, os custos, impostos e taxas e ainda deixa a margem de lucro escolhida. Gerado no Precifica.']));
+  document.body.appendChild(sheet);
+  document.body.classList.add('imprimindo');
+  const fim = () => { document.body.classList.remove('imprimindo'); sheet.remove(); window.removeEventListener('afterprint', fim); };
+  window.addEventListener('afterprint', fim);
+  setTimeout(() => window.print(), 50);
+}
+
 function renderStepResumo(panel){
   const model = APP.model;
   const r = computeResumo(model, APP.state);
   panelHead(panel, '📊 A foto do seu negócio', 'Resumo — Seus Números',
     'Olhe aqui antes de aceitar um novo cliente, mudar de preço ou decidir qualquer coisa importante.');
   const body = el('div', {class:'panel-body'});
+  body.appendChild(resumoHero(model, r));
   const grid = el('div', {class:'stat-grid'});
 
   if (model === 'prestador'){
@@ -2802,7 +3015,6 @@ function renderStepResumo(panel){
     grid.appendChild(statTile(null,'💰 Custo por hora', fmtBRL(r.custoHora)));
     grid.appendChild(statTile(null,'📥 Receita bruta projetada', fmtBRL(r.receita)));
     grid.appendChild(statTile(null,'🏆 Líquido que sobra pra você', fmtBRL(r.liquido), 'hi'));
-    if (r.perdaMensal > 0) grid.appendChild(statTile(null,'💸 Deixando na mesa por mês (preço atual abaixo do justo)', fmtBRL(r.perdaMensal), 'warn'));
     body.appendChild(grid);
     body.appendChild(verdictBanner(r.bateMeta, r.diff, 'Líquido após impostos, repasses e custos, comparado com ' + (r.outrasRendas > 0 ? 'o que este negócio precisa entregar (meta total menos suas outras rendas).' : 'sua meta de lucro.')));
     body.appendChild(el('div', {class:'callout'}, ['Cada horário vago na sua agenda é dinheiro que você já gastou e não vai receber de volta. Preço justo protege sua saúde financeira — e é o primeiro passo pra cuidar bem dos seus pacientes.']));
