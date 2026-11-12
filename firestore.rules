@@ -3,7 +3,7 @@ rules_version = '2';
 // ============================================================================
 // REGRAS DE SEGURANÇA DO PRECIFICA
 //
-// Como aplicar: console.firebase.google.com → projeto precifica-archetti →
+// Como aplicar: console.firebase.google.com → projeto Precifica (precifica-924da) →
 // Firestore Database → aba "Regras" → apague o que estiver lá, cole este
 // arquivo inteiro → "Publicar".
 //

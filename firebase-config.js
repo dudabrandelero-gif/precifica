@@ -11,10 +11,10 @@
 // ============================================================================
 
 export const firebaseConfig = {
-  apiKey: "AIzaSyCaLWYZmqzSBFDsAPTzj11Hxf7ckkqmh4I",
-  authDomain: "precifica-archetti.firebaseapp.com",
-  projectId: "precifica-archetti",
-  storageBucket: "precifica-archetti.firebasestorage.app",
-  messagingSenderId: "655418028873",
-  appId: "1:655418028873:web:514f2d403dc651ce772098",
+  apiKey: "AIzaSyBIQtR3iSBSHxFcPsncT8RmoaSeI9Dtzuw",
+  authDomain: "precifica-924da.firebaseapp.com",
+  projectId: "precifica-924da",
+  storageBucket: "precifica-924da.firebasestorage.app",
+  messagingSenderId: "346606538895",
+  appId: "1:346606538895:web:bffec2bf598460a78a60fa",
 };
