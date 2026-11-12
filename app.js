@@ -867,7 +867,7 @@ const refUser = (...p) => doc(dbfs, 'users', CURRENT_USER.uid, ...p);
 // Grava os dados pessoais (local + nuvem). Usado pela Visão geral.
 function setPessoal(obj){
   lsSet('pessoal', obj);
-  if (CURRENT_USER) setDoc(refUser('dados', 'pessoal'), JSON.parse(JSON.stringify(obj))).catch(e => console.warn('pessoal', e));
+  if (CURRENT_USER) setDoc(refUser(), {pessoal: JSON.parse(JSON.stringify(obj))}, {merge:true}).catch(e => console.warn('pessoal', e));
 }
 
 let SAVE_TIMER = null;
@@ -879,7 +879,7 @@ async function saveState(modelKey, state){
   const r = saveResumo(modelKey, clean);
   try{
     await setDoc(refUser('modelos', modelKey), clean);
-    await setDoc(refUser('dados', 'pessoal'), pickPessoal(clean));
+    await setDoc(refUser(), {pessoal: pickPessoal(clean)}, {merge:true});
     await setDoc(doc(dbfs, 'resumos', CURRENT_USER.uid), {
       nome: CURRENT_USER.nome || '', email: CURRENT_USER.email || '',
       [modelKey]: Object.assign({}, r, {atualizadoEm: serverTimestamp()}),
@@ -912,8 +912,8 @@ async function sincronizarDaNuvem(){
     const s = await getDoc(refUser('modelos', k));
     if (s.exists()) modelos[k] = s.data();
   }
-  const ps = await getDoc(refUser('dados', 'pessoal'));
-  const pessoal = ps.exists() ? ps.data() : null;
+  const ps = await getDoc(refUser());
+  const pessoal = (ps.exists() && ps.data().pessoal) || null;
   const temNuvem = Object.keys(modelos).length || pessoal;
   Object.keys(MODELS).forEach(k => localStorage.removeItem(STORE_PREFIX + 'modelo:' + k));
   localStorage.removeItem(STORE_PREFIX + 'pessoal');
@@ -952,22 +952,19 @@ function initApp(){
     const email = (u.email || '').toLowerCase();
     CURRENT_USER = { uid: u.uid, email, nome: '', admin: isAdminEmail(email) };
     STORE_PREFIX = 'precifica:u:' + u.uid + ':';
-    if (!u.emailVerified){ APP.view = 'verificar'; render(); return; }
+    // Só quem administra precisa confirmar o e-mail (protege o acesso aos dados de todos).
+    if (CURRENT_USER.admin && !u.emailVerified){ APP.view = 'verificar'; render(); return; }
     APP.view = 'loading'; render();
     try{
-      if (!CURRENT_USER.admin){
-        const c = await getDoc(doc(dbfs, 'credenciados', email));
-        if (!c.exists()){ APP.view = 'semacesso'; render(); return; }
-        CURRENT_USER.nome = c.data().nome || '';
-      }
+      if (APP.nomeCadastro){ CURRENT_USER.nome = APP.nomeCadastro; APP.nomeCadastro = ''; }
       const perfil = await getDoc(refUser());
       if (perfil.exists() && perfil.data().nome) CURRENT_USER.nome = perfil.data().nome;
       if (!CURRENT_USER.nome) CURRENT_USER.nome = email.split('@')[0];
-      if (!perfil.exists()) await setDoc(refUser(), {nome: CURRENT_USER.nome, email, criadoEm: serverTimestamp()});
+      if (!perfil.exists()) await setDoc(refUser(), {nome: CURRENT_USER.nome, email, criadoEm: serverTimestamp()}, {merge:true});
       await sincronizarDaNuvem();
     }catch(e){
       console.warn('init', e);
-      APP.view = 'semacesso'; APP.authMsg = 'Não consegui carregar seus dados (' + ((e && e.code) || 'erro') + '). Tente de novo em instantes.'; render(); return;
+      APP.view = 'semacesso'; APP.authMsg = 'Não consegui carregar seus dados (' + ((e && e.code) || 'erro') + '). Confira a internet e tente de novo. Se continuar, fale com a equipe.'; render(); return;
     }
     APP.view = 'menu'; render();
   });
@@ -1027,6 +1024,7 @@ function render(){
   root.innerHTML = '';
   if (APP.view === 'loading'){ root.appendChild(renderLoading()); return; }
   if (APP.view === 'login'){ root.appendChild(renderLogin()); return; }
+  if (APP.view === 'cadastro'){ root.appendChild(renderCadastro()); return; }
   if (APP.view === 'verificar'){ root.appendChild(renderVerificar()); return; }
   if (APP.view === 'semacesso'){ root.appendChild(renderSemAcesso()); return; }
   if (APP.view === 'credenciamento' && CURRENT_USER && CURRENT_USER.admin){ root.appendChild(renderTopbar()); root.appendChild(renderCredenciamento()); return; }
@@ -1065,6 +1063,8 @@ function authErrorPt(err){
     'auth/too-many-requests': 'Muitas tentativas. Espere um pouco e tente de novo.',
     'auth/network-request-failed': 'Sem conexão com a internet no momento.',
     'auth/missing-email': 'Digite o seu e-mail.',
+    'auth/weak-password': 'A senha precisa ter pelo menos 6 caracteres.',
+    'auth/missing-password': 'Digite uma senha.',
   };
   return map[code] || ('Não deu certo (' + (code || 'erro desconhecido') + '). Tente de novo.');
 }
@@ -1104,12 +1104,44 @@ function renderLogin(){
   });
   return authShell([
     el('h2', {}, ['Entrar no Precifica']),
-    el('p', {class:'sub'}, ['Seu acesso é liberado pela equipe quando você se inscreve. No primeiro acesso, clique em "Primeiro acesso" pra criar sua senha.']),
+    el('p', {class:'sub'}, ['Recebeu um convite por e-mail? Clique em "Primeiro acesso" pra criar sua senha.']),
     msg,
     el('div', {class:'auth-field'}, [el('label',{},['E-mail']), email]),
     el('div', {class:'auth-field'}, [el('label',{},['Senha']), senha]),
     entrar,
     el('div', {class:'auth-forgot', style:'text-align:center;margin-top:12px;'}, [primeiro]),
+    el('div', {class:'auth-switch'}, ['Ainda não tem conta? ', el('button', {type:'button', class:'auth-link', onclick:()=>{ APP.view='cadastro'; APP.authMsg=''; render(); }}, ['Criar conta'])]),
+  ]);
+}
+
+function renderCadastro(){
+  const nome = el('input', {class:'auth-input', placeholder:'Seu nome', autocomplete:'name'});
+  const email = el('input', {class:'auth-input', type:'email', placeholder:'voce@email.com', autocomplete:'username'});
+  const senha = el('input', {class:'auth-input', type:'password', placeholder:'mínimo 6 caracteres', autocomplete:'new-password'});
+  const msg = el('div', {class:'auth-error', style:'display:none;'});
+  const criar = el('button', {class:'btn btn-primary auth-submit', type:'button'}, ['Criar conta e entrar']);
+  criar.addEventListener('click', async () => {
+    msg.style.display = 'none';
+    if (!nome.value.trim()){ msg.textContent = 'Digite o seu nome.'; msg.style.display = ''; return; }
+    criar.disabled = true;
+    APP.nomeCadastro = nome.value.trim();
+    try{ await createUserWithEmailAndPassword(auth, email.value.trim(), senha.value); }
+    catch(e){
+      APP.nomeCadastro = '';
+      msg.textContent = e && e.code === 'auth/email-already-in-use' ? 'Já existe uma conta com esse e-mail. Volte e use "Primeiro acesso ou esqueci a senha".' : authErrorPt(e);
+      msg.style.display = '';
+    }
+    finally{ criar.disabled = false; }
+  });
+  return authShell([
+    el('h2', {}, ['Criar sua conta']),
+    el('p', {class:'sub'}, ['Leva menos de um minuto. Seus dados ficam salvos na sua conta.']),
+    msg,
+    el('div', {class:'auth-field'}, [el('label',{},['Nome']), nome]),
+    el('div', {class:'auth-field'}, [el('label',{},['E-mail']), email]),
+    el('div', {class:'auth-field'}, [el('label',{},['Senha']), senha]),
+    criar,
+    el('div', {class:'auth-switch'}, ['Já tem conta? ', el('button', {type:'button', class:'auth-link', onclick:()=>{ APP.view='login'; render(); }}, ['Entrar'])]),
   ]);
 }
 
@@ -1152,11 +1184,11 @@ function adminHead(titulo, desc){
 
 function renderCredenciamento(){
   const wrap = el('div', {class:'home admin'});
-  wrap.appendChild(adminHead('Credenciamento', 'Cadastre aqui cada pessoa que se inscreveu. Ela recebe um e-mail pra criar a senha e já entra com o acesso liberado.'));
+  wrap.appendChild(adminHead('Credenciamento', 'O acesso é livre: qualquer pessoa pode criar a própria conta. Aqui você convida quem se inscreveu na plataforma — ela recebe um e-mail pra criar a senha e já entra.'));
   const nome = el('input', {class:'inp text-left', placeholder:'Nome completo'});
   const email = el('input', {class:'inp text-left', type:'email', placeholder:'e-mail usado na inscrição'});
   const msg = el('div', {class:'help', style:'margin-top:8px;'});
-  const add = el('button', {class:'btn btn-primary', type:'button'}, ['Credenciar e enviar convite']);
+  const add = el('button', {class:'btn btn-primary', type:'button'}, ['Cadastrar e enviar convite']);
   add.addEventListener('click', async () => {
     const e = email.value.trim().toLowerCase(), n = nome.value.trim();
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)){ msg.textContent = 'Confira o e-mail.'; return; }
@@ -1195,9 +1227,9 @@ function renderCredenciamento(){
             try{ await sendPasswordResetEmail(auth, c.email); ev.target.textContent = 'enviado ✔'; } catch(e){ ev.target.textContent = 'erro'; }
           }}, ['reenviar convite']),
           el('button', {class:'btn-ghost btn-sm', type:'button', onclick: async () => {
-            if (!confirm('Remover o acesso de ' + (c.nome || c.email) + '? Os dados dela continuam guardados; ela só não consegue mais entrar.')) return;
+            if (!confirm('Tirar ' + (c.nome || c.email) + ' da lista de convidados? A conta dela continua funcionando.')) return;
             await deleteDoc(doc(dbfs, 'credenciados', c.email)); carregar();
-          }}, ['remover acesso']),
+          }}, ['tirar da lista']),
         ]),
       ]));
     });
@@ -1209,7 +1241,7 @@ function renderCredenciamento(){
       const ativos = new Set(); rs.forEach(d => { const e = (d.data().email||'').toLowerCase(); if (e) ativos.add(e); });
       itens = []; cs.forEach(d => itens.push(Object.assign({email:d.id}, d.data(), {ativo: ativos.has(d.id)})));
       itens.sort((a,b) => (a.nome||a.email).localeCompare(b.nome||b.email, 'pt-BR'));
-    }catch(e){ itens = []; msg.textContent = 'Não consegui carregar a lista (' + ((e && e.code) || e) + '). As regras do Firebase já foram atualizadas?'; }
+    }catch(e){ itens = []; msg.textContent = 'Não consegui carregar a lista (' + ((e && e.code) || e) + '). Para ver e cadastrar pessoas, as regras novas precisam estar publicadas no Firebase (arquivo firestore.rules).'; }
     desenhar();
   }
   desenhar(); carregar();
@@ -1242,7 +1274,7 @@ function renderAlunos(){
         return Object.assign({}, v, {perda, ult});
       }).sort((a,b) => b.perda - a.perda);
     }catch(e){
-      lista.innerHTML = ''; lista.appendChild(el('div', {class:'geral-row'}, [el('span', {class:'help'}, ['Não consegui carregar (' + ((e && e.code) || e) + '). As regras do Firebase já foram atualizadas?'])])); return;
+      lista.innerHTML = ''; lista.appendChild(el('div', {class:'geral-row'}, [el('span', {class:'help'}, ['Não consegui carregar (' + ((e && e.code) || e) + '). Para ver os dados de todo mundo, as regras novas precisam estar publicadas no Firebase (arquivo firestore.rules).'])])); return;
     }
     lista.innerHTML = '';
     lista.appendChild(el('div', {class:'geral-row alunos-row geral-head'}, ['Aluno','Clínica (lucro / meta)','Cursos','Produtos','Deixando na mesa','Atualizado'].map(x => el('span', {}, [x]))));

@@ -8,13 +8,12 @@ rules_version = '2';
 // arquivo inteiro → "Publicar".
 //
 // O que essas regras garantem:
-// - Só entra quem foi CREDENCIADO (coleção "credenciados", um documento por
-//   e-mail) e confirmou o e-mail.
+// - O acesso é livre: qualquer pessoa que cria conta usa o Precifica.
 // - Cada pessoa só lê e escreve os PRÓPRIOS dados.
-// - As administradoras (lista abaixo) leem os dados de todo mundo e são as
-//   únicas que credenciam ou removem pessoas.
+// - As administradoras (lista abaixo, com e-mail confirmado) leem os dados
+//   de todo mundo e gerenciam a lista de convidados ("credenciados").
 //
-// A lista de administradores precisa ser IGUAL à do app.js (ADMIN_EMAILS).
+// A lista de administradoras precisa ser IGUAL à do app.js (ADMIN_EMAILS).
 // ============================================================================
 
 service cloud.firestore {
@@ -23,48 +22,37 @@ service cloud.firestore {
     function isSignedIn() {
       return request.auth != null;
     }
-    function emailVerificado() {
-      return isSignedIn() && request.auth.token.email_verified == true;
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
     }
     function isAdmin() {
-      return emailVerificado() && request.auth.token.email in [
-        'mariaeduarda@archettiodonto.com.br',
-        'ubiratan@archettiodonto.com.br'
-      ];
-    }
-    function isCredenciado() {
-      return emailVerificado() &&
-        exists(/databases/$(database)/documents/credenciados/$(request.auth.token.email));
-    }
-    function podeUsar(uid) {
-      return isSignedIn() && request.auth.uid == uid && (isCredenciado() || isAdmin());
+      return isSignedIn() && request.auth.token.email_verified == true &&
+        request.auth.token.email in [
+          'mariaeduarda@archettiodonto.com.br',
+          'ubiratan@archettiodonto.com.br'
+        ];
     }
 
-    // Quem pode entrar. Só as administradoras criam/removem.
+    // Lista de convidados (quem a equipe cadastrou). Só as administradoras mexem.
     match /credenciados/{email} {
-      allow read: if isAdmin() || (emailVerificado() && request.auth.token.email == email);
-      allow write: if isAdmin();
+      allow read, write: if isAdmin();
     }
 
     match /users/{uid} {
-      allow read: if podeUsar(uid) || isAdmin();
-      allow create, update: if podeUsar(uid);
+      allow read: if isOwner(uid) || isAdmin();
+      allow create, update: if isOwner(uid);
       allow delete: if false;
 
       match /modelos/{modelKey} {
-        allow read: if podeUsar(uid) || isAdmin();
-        allow write: if podeUsar(uid);
-      }
-      match /dados/{docId} {
-        allow read: if podeUsar(uid) || isAdmin();
-        allow write: if podeUsar(uid);
+        allow read: if isOwner(uid) || isAdmin();
+        allow write: if isOwner(uid);
       }
     }
 
     // Números resumidos de cada pessoa (o que aparece no painel "Alunos").
     match /resumos/{uid} {
-      allow read: if podeUsar(uid) || isAdmin();
-      allow write: if podeUsar(uid);
+      allow read: if isOwner(uid) || isAdmin();
+      allow write: if isOwner(uid);
     }
   }
 }
