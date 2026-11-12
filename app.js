@@ -735,19 +735,27 @@ function computeCalcConhecimento(rows, horaC){
 /* Resumo                                                                  */
 /* ---------------------------------------------------------------------- */
 
+function metaParte(state, modelKey){
+  const d = state && state.divisaoMeta;
+  if (!d || d[modelKey] == null) return 1;
+  return Math.max(0, Math.min(1, parseBR(d[modelKey])));
+}
+
 function computeResumo(modelKey, state){
   const horaC = computeHora(modelKey, state);
   const calc = computeCalcAll(modelKey, state.calcular, horaC, state);
   const metaTotal = computeMeta(state);
   const outrasRendas = sumOutrasRendas(state);
-  const meta = computeMetaNegocio(state); // o que ESTE negócio precisa entregar
+  // Com mais de uma frente (clínica + cursos…), cada uma entrega uma parte da meta.
+  const metaShare = metaParte(state, modelKey);
+  const meta = computeMetaNegocio(state) * metaShare; // o que ESTA frente precisa entregar
   const custoVida = sumVida(state);
   const metaSonhos = sumSonhosMensal(state);
 
   if (modelKey === 'prestador'){
     const liquido = calc.totals.liquido;
     return {
-      meta, metaTotal, outrasRendas, custoVida, metaSonhos,
+      meta, metaTotal, outrasRendas, custoVida, metaSonhos, metaShare,
       custoFixoNegocio: horaC.custoFixoNegocio,
       horasDisponiveis: horaC.horasDisponiveis,
       horasAtendidas: calc.totals.horas,
@@ -768,7 +776,7 @@ function computeResumo(modelKey, state){
   if (modelKey === 'produto'){
     const lucro = calc.totals.lucroLiquido;
     return {
-      meta, metaTotal, outrasRendas, custoVida, metaSonhos,
+      meta, metaTotal, outrasRendas, custoVida, metaSonhos, metaShare,
       custoFixoEmpresa: horaC.custoFixoEmpresa,
       custoHoraEmpresa: horaC.custoHoraEmpresa,
       custoHoraProducao: horaC.custoHoraProducao,
@@ -791,7 +799,7 @@ function computeResumo(modelKey, state){
     if (horasComprometidas > horaC.horasProdutivasMes) capStatus = 'over';
     else if (horasComprometidas > 0.9*horaC.horasProdutivasMes) capStatus = 'alerta';
     return {
-      meta, metaTotal, outrasRendas, custoVida, metaSonhos,
+      meta, metaTotal, outrasRendas, custoVida, metaSonhos, metaShare,
       custoFixoNegocio: horaC.custoFixoNegocio,
       horasProdutivasMes: horaC.horasProdutivasMes,
       custoHora: horaC.custoHora,
@@ -826,8 +834,25 @@ let CURRENT_USER = null; // {uid, email, nome}
 
 /* ---------- Load/save no navegador ---------- */
 
+// Dados da PESSOA (não do negócio): preenchidos uma vez e usados por todas as frentes.
+const CAMPOS_PESSOAIS = ['sonhos','sonhosTaxas','vida','vidaLabels','filhos','meta','rendas','divisaoMeta'];
+function pickPessoal(st){ const o = {}; CAMPOS_PESSOAIS.forEach(k => { if (st && st[k] !== undefined) o[k] = st[k]; }); return o; }
+// Contas antigas: cada modelo tinha a própria cópia. Usa a da clínica (ou a primeira que existir).
+function migrarPessoal(){
+  if (lsGet('pessoal')) return;
+  for (const k of ['prestador','conhecimento','produto']){
+    const v = lsGet('modelo:' + k);
+    if (v){ try{ lsSet('pessoal', pickPessoal(v)); }catch(e){} return; }
+  }
+}
+function lerModelo(modelKey){
+  const salvo = lsGet('modelo:' + modelKey);
+  const pessoal = lsGet('pessoal');
+  if (!salvo && !pessoal) return null;
+  return Object.assign({}, salvo || {}, pessoal || {});
+}
 async function loadState(modelKey){
-  return mergeWithDefaults(modelKey, lsGet('modelo:' + modelKey));
+  return mergeWithDefaults(modelKey, lerModelo(modelKey));
 }
 
 let SAVE_TIMER = null;
@@ -836,6 +861,7 @@ async function saveState(modelKey, state){
   try{
     const clean = JSON.parse(JSON.stringify(state));
     lsSet('modelo:' + modelKey, clean);
+    lsSet('pessoal', pickPessoal(clean));
     saveResumo(modelKey, clean);
     markSaved();
   }catch(e){
@@ -858,6 +884,7 @@ function persist(){ scheduleSave(APP.model, APP.state); }
 /* ---------- Início (sem login) ---------- */
 
 function initApp(){
+  migrarPessoal();
   CURRENT_USER = { uid: 'local', email: '', nome: '' };
   APP.view = 'menu';
   render();
@@ -872,7 +899,7 @@ async function loadMenuResumo(){
 /* ---------- Backup (levar os dados pra outro aparelho) ---------- */
 
 function baixarBackup(){
-  const dados = { app:'precifica', versao:1, geradoEm:new Date().toISOString(), modelos:{}, resumos: lsGet('resumos') || {} };
+  const dados = { app:'precifica', versao:2, geradoEm:new Date().toISOString(), modelos:{}, resumos: lsGet('resumos') || {}, pessoal: lsGet('pessoal') || null };
   Object.keys(MODELS).forEach(k => { const v = lsGet('modelo:' + k); if (v) dados.modelos[k] = v; });
   const blob = new Blob([JSON.stringify(dados, null, 1)], {type:'application/json'});
   const a = document.createElement('a');
@@ -892,6 +919,7 @@ function carregarBackup(){
       if (!confirm('Carregar este backup? Os dados preenchidos neste aparelho serão substituídos pelos do arquivo.')) return;
       Object.keys(dados.modelos).forEach(k => { if (MODELS[k]) lsSet('modelo:' + k, dados.modelos[k]); });
       lsSet('resumos', dados.resumos || {});
+      if (dados.pessoal) lsSet('pessoal', dados.pessoal); else { localStorage.removeItem(STORE_PREFIX + 'pessoal'); migrarPessoal(); }
       loadMenuResumo();
       alert('Backup carregado.');
     }catch(e){ alert('Não consegui ler esse arquivo. Escolha um backup baixado pelo próprio Precifica.'); }
@@ -942,6 +970,7 @@ function render(){
   if (APP.view === 'loading'){ root.appendChild(renderLoading()); return; }
   if (APP.view === 'menu'){ root.appendChild(renderTopbar()); root.appendChild(renderMenu()); return; }
   if (APP.view === 'rapido'){ root.appendChild(renderTopbar()); root.appendChild(renderRapido()); window.scrollTo(0,0); return; }
+  if (APP.view === 'geral'){ root.appendChild(renderTopbar()); root.appendChild(renderVisaoGeral()); window.scrollTo(0,0); return; }
   if (APP.view === 'wizard'){
     root.appendChild(renderTopbar());
     if (!APP.state){ root.appendChild(renderLoading()); return; }
@@ -1028,7 +1057,12 @@ function renderMenu(){
   ]));
   wrap.appendChild(main);
 
-  wrap.appendChild(el('div', {class:'cat-title', style:'margin-top:30px;'}, ['Também vende produtos ou cursos?']));
+  const preenchidas = Object.keys(MODELS).filter(k => lsGet('modelo:' + k));
+  if (preenchidas.length) wrap.appendChild(el('button', {class:'home-geral', type:'button', onclick:()=>{ APP.view='geral'; render(); }}, [
+    el('b', {}, ['📊 Visão geral — todas as frentes juntas']),
+    el('span', {class:'help', style:'margin:0;'}, ['Clínica + cursos + produtos somados contra a sua meta, e onde cada hora sua rende mais.']),
+  ]));
+  wrap.appendChild(el('div', {class:'cat-title', style:'margin-top:30px;'}, ['Também vende produtos, cursos ou ebooks?']));
   const outros = el('div', {class:'home-outros'});
   ['produto', 'conhecimento'].forEach(k => {
     const m = MODELS[k]; const rr = resumo[k];
@@ -1048,6 +1082,135 @@ function renderMenu(){
     el('li', {}, ['Seus dados ficam salvos neste navegador. Pra continuar em outro aparelho, baixe o backup e carregue lá.']),
     el('li', {}, ['Nada é enviado pra internet. Se limpar os dados do navegador, o que foi preenchido some — guarde um backup.']),
   ]));
+  return wrap;
+}
+
+/* ---------- Visão geral: todas as frentes juntas ---------- */
+const NOME_FRENTE = {prestador:'Clínica (atendimentos)', produto:'Produtos', conhecimento:'Cursos, ebooks e mentorias'};
+function frentesAtivas(){
+  const ign = (lsGet('pessoal') || {}).frentesIgnoradas || [];
+  return Object.keys(MODELS).filter(k => lsGet('modelo:' + k) && !ign.includes(k));
+}
+function dadosFrente(k){
+  const st = mergeWithDefaults(k, lerModelo(k));
+  const r = computeResumo(k, st);
+  const h = st.hora || {};
+  let horasSemana = null;
+  if (k === 'prestador') horasSemana = (parseBR(h.diasUteis)||0) * (parseBR(h.horasDia)||0);
+  if (k === 'conhecimento') horasSemana = (parseBR(h.diasUteis)||0) * (parseBR(h.horasProdutivasDia)||0);
+  const horasMesTrabalho = (k === 'prestador' || k === 'conhecimento') ? r.calc.totals.horas : 0;
+  return {k, st, r, horasSemana, horasMesTrabalho, lucroHora: horasMesTrabalho > 0 ? r.liquido / horasMesTrabalho : null};
+}
+
+function renderVisaoGeral(){
+  const wrap = el('div', {class:'home geral'});
+  wrap.appendChild(el('div', {class:'home-hero'}, [
+    el('div', {class:'eyebrow'}, ['Visão geral']),
+    el('h1', {class:'disp'}, ['Todas as suas frentes juntas']),
+    el('p', {}, ['Clínica, cursos, produtos: tudo somado contra a sua meta. Sonhos, vida e meta são os mesmos pra todas as frentes — você preenche uma vez só.']),
+  ]));
+  const ativas = frentesAtivas();
+  if (!ativas.length){
+    wrap.appendChild(el('p', {}, ['Você ainda não preencheu nenhuma frente. Comece pela sua clínica.']));
+    wrap.appendChild(el('button', {class:'btn btn-primary', type:'button', onclick:()=>selectModel('prestador')}, ['Começar pela clínica']));
+    return wrap;
+  }
+  const fs = ativas.map(dadosFrente);
+  const st0 = fs[0].st;
+  const metaNeg = computeMetaNegocio(st0);
+  const lucroTotal = fs.reduce((s,f)=>s + f.r.liquido, 0);
+  const receitaTotal = fs.reduce((s,f)=>s + f.r.receita, 0);
+  const perdaTotal = fs.reduce((s,f)=>s + (f.r.perdaMensal||0), 0);
+  const falta = metaNeg - lucroTotal;
+
+  // destaque
+  const hero = el('div', {class:'resumo-hero ' + (falta > 0 ? 'perda' : 'ok')});
+  hero.appendChild(el('div', {class:'lbl'}, [falta > 0 ? 'Somando tudo, faltam' : '✅ Somando tudo, você bate a meta']));
+  hero.appendChild(el('div', {class:'val'}, [(falta > 0 ? '' : '+') + fmtBRL(Math.abs(falta))]));
+  hero.appendChild(el('div', {class:'lbl'}, [falta > 0 ? 'por mês pra chegar na meta de ' + fmtBRL(metaNeg) + '.' : 'por mês além da meta de ' + fmtBRL(metaNeg) + '.']));
+  if (perdaTotal > 0) hero.appendChild(el('div', {class:'lbl', style:'margin-top:8px;'}, ['💸 E está deixando ' + fmtBRL(perdaTotal) + ' por mês na mesa, cobrando abaixo do preço certo.']));
+  wrap.appendChild(hero);
+
+  // tabela por frente
+  const melhor = fs.filter(f => f.lucroHora != null && f.lucroHora > 0).sort((a,b)=>b.lucroHora - a.lucroHora)[0];
+  const t = el('div', {class:'geral-tabela'});
+  t.appendChild(el('div', {class:'geral-row geral-head'}, ['Frente','Receita/mês','Lucro/mês','Horas/semana','Lucro por hora sua',''].map(x => el('span', {}, [x]))));
+  fs.forEach(f => {
+    t.appendChild(el('div', {class:'geral-row'}, [
+      el('span', {}, [el('b', {}, [NOME_FRENTE[f.k]])]),
+      el('span', {class:'mono'}, [fmtBRL(f.r.receita)]),
+      el('span', {class:'mono'}, [fmtBRL(f.r.liquido)]),
+      el('span', {class:'mono'}, [f.horasSemana != null ? fmtNum(f.horasSemana,0) + ' h' : '—']),
+      el('span', {class:'mono' + (melhor && melhor.k === f.k ? ' geral-best' : '')}, [f.lucroHora != null ? fmtBRL(f.lucroHora) + (melhor && melhor.k === f.k && fs.length > 1 ? ' ⭐' : '') : '—']),
+      el('span', {}, [el('button', {class:'btn-ghost btn-sm', type:'button', onclick:()=>selectModel(f.k)}, ['abrir'])]),
+    ]));
+  });
+  const horasTot = fs.reduce((s,f)=>s + (f.horasSemana||0), 0);
+  t.appendChild(el('div', {class:'geral-row geral-foot'}, [
+    el('span', {}, [el('b', {}, ['Total'])]), el('span', {class:'mono'}, [fmtBRL(receitaTotal)]), el('span', {class:'mono'}, [el('b', {}, [fmtBRL(lucroTotal)])]),
+    el('span', {class:'mono'}, [horasTot ? fmtNum(horasTot,0) + ' h' : '—']), el('span'), el('span'),
+  ]));
+  wrap.appendChild(t);
+  if (melhor && fs.filter(f => f.lucroHora).length > 1){
+    wrap.appendChild(el('div', {class:'callout'}, [el('b', {}, ['A pergunta de ouro: ']),
+      'cada hora sua rende mais em ' + NOME_FRENTE[melhor.k].toLowerCase() + ' (' + fmtBRL(melhor.lucroHora) + ' de lucro por hora). Antes de abrir mais horário, pense onde a sua próxima hora vale mais.']));
+  }
+
+  // alertas
+  if (horasTot > 50) wrap.appendChild(el('div', {class:'svc-diff falta', style:'margin-top:10px;'}, ['⚠️ Somando as frentes, são ' + fmtNum(horasTot,0) + ' horas por semana. As horas de gravar aula e responder aluno saem da mesma semana da cadeira — revise a Minha Hora de cada frente.']));
+  const rendas = (st0.rendas && st0.rendas.ativo) ? (st0.rendas.itens||[]) : [];
+  if (fs.length > 1 && rendas.some(x => x.tipo === 'negocio' && parseBR(x.valor) > 0)){
+    wrap.appendChild(el('div', {class:'svc-diff falta', style:'margin-top:10px;'}, ['⚠️ Em "Outras fontes de renda" há um "Outro negócio". Se for uma destas frentes, ela está sendo contada duas vezes — tire de lá, porque aqui elas já somam sozinhas.']));
+  }
+
+  // divisão da meta
+  const d = Object.assign({}, st0.divisaoMeta || {});
+  const box = el('div', {class:'cat-group', style:'margin-top:22px;'});
+  box.appendChild(el('div', {class:'cat-title'}, ['Quanto da meta cada frente entrega']));
+  box.appendChild(el('p', {class:'help', style:'margin:0 0 8px;'}, ['Assim o Resumo de cada frente compara com a parte dela, e não com a meta inteira. A soma deve dar 100%.']));
+  const somaEl = el('div', {class:'help', style:'margin-top:6px;'});
+  const salvarDiv = () => {
+    const pes = lsGet('pessoal') || {};
+    pes.divisaoMeta = d; lsSet('pessoal', pes);
+    const soma = ativas.reduce((s,k)=>s + (parseBR(d[k]) || 0), 0);
+    somaEl.textContent = 'Soma: ' + fmtNum(soma*100,0) + '%' + (Math.abs(soma-1) > 0.005 ? ' — ajuste pra chegar a 100%.' : ' ✔');
+  };
+  ativas.forEach(k => {
+    if (d[k] == null) d[k] = ativas.length === 1 ? 1 : 0;
+    box.appendChild(el('div', {class:'field-row'}, [el('label', {}, [NOME_FRENTE[k]]),
+      numberInput({value:d[k], kind:'pct', onInput:(n)=>{ d[k] = n; salvarDiv(); }})]));
+  });
+  box.appendChild(somaEl);
+  if (ativas.length > 1){
+    box.appendChild(el('button', {class:'btn btn-secondary btn-sm', type:'button', style:'margin-top:6px;', onclick:()=>{
+      const tot = lucroTotal > 0 ? lucroTotal : 0;
+      fs.forEach(f => { d[f.k] = tot ? Math.round(Math.max(0,f.r.liquido)/tot*100)/100 : Math.round(100/fs.length)/100; });
+      salvarDiv(); render();
+    }}, ['Dividir conforme o lucro de hoje']));
+  }
+  wrap.appendChild(box);
+  salvarDiv();
+
+  // frentes que não usa
+  const todas = Object.keys(MODELS).filter(k => lsGet('modelo:' + k));
+  if (todas.length > ativas.length || todas.length > 1){
+    const ign = (lsGet('pessoal') || {}).frentesIgnoradas || [];
+    const g = el('div', {class:'help', style:'margin-top:16px;'}, ['Frentes consideradas: ']);
+    todas.forEach(k => {
+      const c = el('input', {type:'checkbox'}); c.checked = !ign.includes(k);
+      c.addEventListener('change', () => {
+        const pes = lsGet('pessoal') || {}; const l = new Set(pes.frentesIgnoradas || []);
+        if (c.checked) l.delete(k); else l.add(k);
+        pes.frentesIgnoradas = [...l]; lsSet('pessoal', pes); render();
+      });
+      g.appendChild(el('label', {style:'margin-right:14px;cursor:pointer;'}, [c, ' ' + NOME_FRENTE[k]]));
+    });
+    wrap.appendChild(g);
+  }
+  const outras = Object.keys(MODELS).filter(k => !lsGet('modelo:' + k));
+  if (outras.length) wrap.appendChild(el('div', {style:'margin-top:16px;display:flex;gap:8px;flex-wrap:wrap;'}, outras.map(k =>
+    el('button', {class:'btn btn-secondary btn-sm', type:'button', onclick:()=>selectModel(k)}, ['+ Adicionar ' + NOME_FRENTE[k].toLowerCase()]))));
+  wrap.appendChild(el('button', {class:'btn-ghost', type:'button', style:'margin-top:20px;', onclick:()=>{ APP.view='menu'; render(); }}, ['← Voltar ao início']));
   return wrap;
 }
 
@@ -2922,6 +3085,12 @@ function verdictBanner(bate, valorFalta, liquidoLabel){
 }
 
 function metaTiles(grid, r){
+  if (r.metaShare < 1){
+    grid.appendChild(statTile(null,'🎯 Meta total (tudo que você precisa)', fmtBRL(r.metaTotal)));
+    if (r.outrasRendas > 0) grid.appendChild(statTile(null,'💼 Outras rendas (CLT, investimentos…)', fmtBRL(r.outrasRendas)));
+    grid.appendChild(statTile(null,'🎯 Parte desta frente (' + fmtNum(r.metaShare*100,0) + '% — ajuste na Visão geral)', fmtBRL(r.meta)));
+    return;
+  }
   if (r.outrasRendas > 0){
     grid.appendChild(statTile(null,'🎯 Meta total (tudo que você precisa)', fmtBRL(r.metaTotal)));
     grid.appendChild(statTile(null,'💼 Outras rendas (CLT, investimentos…)', fmtBRL(r.outrasRendas)));
@@ -2965,6 +3134,7 @@ function resumoHero(model, r){
   box.appendChild(el('div', {class:'resumo-hero-btns'}, [
     el('button', {class:'btn btn-primary', type:'button', onclick:()=>aplicarDentistaCEO(textoNumeros(model, r))}, ['Quero ajuda pra crescer → aplicar para o DentistaCEO']),
     el('button', {class:'btn btn-secondary', type:'button', onclick:()=>imprimirResumo(model, r)}, ['📄 Baixar PDF (1 página)']),
+    el('button', {class:'btn btn-secondary', type:'button', onclick:()=>{ APP.view='geral'; APP.model=null; APP.state=null; render(); }}, ['📊 Ver todas as frentes juntas']),
   ]));
   return box;
 }
