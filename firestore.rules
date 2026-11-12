@@ -3,17 +3,18 @@ rules_version = '2';
 // ============================================================================
 // REGRAS DE SEGURANÇA DO PRECIFICA
 //
-// Como aplicar: console.firebase.google.com → seu projeto → Firestore Database
-// → aba "Regras" → cole este arquivo inteiro no lugar do que estiver lá →
-// "Publicar".
+// Como aplicar: console.firebase.google.com → projeto precifica-archetti →
+// Firestore Database → aba "Regras" → apague o que estiver lá, cole este
+// arquivo inteiro → "Publicar".
 //
 // O que essas regras garantem:
-// - Cada usuário só lê e escreve os PRÓPRIOS dados
-//   (users/{uid}, users/{uid}/modelos/* e resumos/{uid}).
-// - Não existe mais um papel "mentor" com acesso aos dados de outras contas —
-//   por enquanto, o Precifica é só a calculadora, sem o painel de acompanhar
-//   turma. Se essa funcionalidade voltar, é aqui que a permissão de leitura
-//   extra seria adicionada de novo.
+// - Só entra quem foi CREDENCIADO (coleção "credenciados", um documento por
+//   e-mail) e confirmou o e-mail.
+// - Cada pessoa só lê e escreve os PRÓPRIOS dados.
+// - As administradoras (lista abaixo) leem os dados de todo mundo e são as
+//   únicas que credenciam ou removem pessoas.
+//
+// A lista de administradores precisa ser IGUAL à do app.js (ADMIN_EMAILS).
 // ============================================================================
 
 service cloud.firestore {
@@ -22,23 +23,48 @@ service cloud.firestore {
     function isSignedIn() {
       return request.auth != null;
     }
-    function isOwner(uid) {
-      return isSignedIn() && request.auth.uid == uid;
+    function emailVerificado() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+    function isAdmin() {
+      return emailVerificado() && request.auth.token.email in [
+        'mariaeduarda@archettiodonto.com.br',
+        'ubiratan@archettiodonto.com.br'
+      ];
+    }
+    function isCredenciado() {
+      return emailVerificado() &&
+        exists(/databases/$(database)/documents/credenciados/$(request.auth.token.email));
+    }
+    function podeUsar(uid) {
+      return isSignedIn() && request.auth.uid == uid && (isCredenciado() || isAdmin());
+    }
+
+    // Quem pode entrar. Só as administradoras criam/removem.
+    match /credenciados/{email} {
+      allow read: if isAdmin() || (emailVerificado() && request.auth.token.email == email);
+      allow write: if isAdmin();
     }
 
     match /users/{uid} {
-      allow read: if isOwner(uid);
-      allow create: if isOwner(uid);
-      allow update: if isOwner(uid);
+      allow read: if podeUsar(uid) || isAdmin();
+      allow create, update: if podeUsar(uid);
       allow delete: if false;
 
       match /modelos/{modelKey} {
-        allow read, write: if isOwner(uid);
+        allow read: if podeUsar(uid) || isAdmin();
+        allow write: if podeUsar(uid);
+      }
+      match /dados/{docId} {
+        allow read: if podeUsar(uid) || isAdmin();
+        allow write: if podeUsar(uid);
       }
     }
 
+    // Números resumidos de cada pessoa (o que aparece no painel "Alunos").
     match /resumos/{uid} {
-      allow read, write: if isOwner(uid);
+      allow read: if podeUsar(uid) || isAdmin();
+      allow write: if podeUsar(uid);
     }
   }
 }

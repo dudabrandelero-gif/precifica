@@ -1,28 +1,37 @@
 /* ============================================================================
-   Firebase — init e helpers de autenticação/dados
+   Firebase — login, dados na nuvem e credenciamento
    ============================================================================ */
 
-// Sem login: o Precifica abre direto e guarda os dados NESTE navegador (localStorage).
-// Pra levar os dados pra outro aparelho, use "Baixar backup" / "Carregar backup" no menu.
-const STORE_PREFIX = 'precifica:';
-function lsGet(key){ try{ const v = localStorage.getItem(STORE_PREFIX + key); return v ? JSON.parse(v) : null; }catch(e){ return null; } }
-function lsSet(key, val){ localStorage.setItem(STORE_PREFIX + key, JSON.stringify(val)); }
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
+import {
+  getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword,
+  signOut, sendPasswordResetEmail, sendEmailVerification,
+} from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
+import {
+  getFirestore, doc, getDoc, setDoc, deleteDoc, collection, getDocs, serverTimestamp,
+} from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+import { firebaseConfig } from "./firebase-config.js";
 
-function authErrorPt(err){
-  const code = (err && err.code) || '';
-  const map = {
-    'auth/invalid-email': 'E-mail inválido.',
-    'auth/user-disabled': 'Essa conta foi desativada.',
-    'auth/user-not-found': 'Não achamos uma conta com esse e-mail.',
-    'auth/wrong-password': 'Senha incorreta.',
-    'auth/invalid-credential': 'E-mail ou senha incorretos.',
-    'auth/email-already-in-use': 'Já existe uma conta com esse e-mail. Tente entrar em vez de cadastrar.',
-    'auth/weak-password': 'A senha precisa ter pelo menos 6 caracteres.',
-    'auth/too-many-requests': 'Muitas tentativas. Espere um pouco e tente de novo.',
-    'auth/network-request-failed': 'Sem conexão com a internet no momento.',
-  };
-  return map[code] || ('Não deu certo (' + (code || 'erro desconhecido') + '). Tente de novo.');
-}
+const fbApp = initializeApp(firebaseConfig);
+const auth = getAuth(fbApp);
+const dbfs = getFirestore(fbApp);
+// Segunda "instância" só pra criar contas de outras pessoas sem deslogar quem está credenciando.
+const fbAppCred = initializeApp(firebaseConfig, 'credenciamento');
+const authCred = getAuth(fbAppCred);
+
+// Quem administra: recebe os dados de todo mundo e credencia pessoas.
+// (Precisa ser igual à lista do arquivo firestore.rules.)
+const ADMIN_EMAILS = ['mariaeduarda@archettiodonto.com.br', 'ubiratan@archettiodonto.com.br'];
+function isAdminEmail(e){ return ADMIN_EMAILS.includes(String(e||'').trim().toLowerCase()); }
+
+// Cópia local (rápida) dos dados da conta. Separada por pessoa, pra um computador
+// compartilhado não misturar dados. O prefixo muda depois do login.
+const LEGACY_PREFIX = 'precifica:';
+let STORE_PREFIX = LEGACY_PREFIX;
+function lsGet(key){ try{ const v = localStorage.getItem(STORE_PREFIX + key); return v ? JSON.parse(v) : null; }catch(e){ return null; } }
+function lsSet(key, val){ try{ localStorage.setItem(STORE_PREFIX + key, JSON.stringify(val)); }catch(e){} }
+function lsGetLegacy(key){ try{ const v = localStorage.getItem(LEGACY_PREFIX + key); return v ? JSON.parse(v) : null; }catch(e){ return null; } }
+
 const VIDA_CATS = [{"name": "MORADIA", "items": ["Aluguel ou financiamento", "Condomínio", "IPTU (anual ÷ 12)", "Luz / energia", "Água", "Gás (botijão ou encanado)", "Internet", "TV a cabo / streaming (Netflix, Spotify etc)", "Empregada / diarista", "Jardineiro / piscineiro / manutenção", "Móveis, decoração, reformas (reserva mensal)"]}, {"name": "ALIMENTAÇÃO", "items": ["Supermercado", "Feira / hortifruti", "Açougue / peixaria", "Padaria / laticínios", "Restaurantes", "Delivery / fast food", "Cafés e lanches fora"]}, {"name": "TRANSPORTE", "items": ["Combustível", "Parcela do carro / financiamento", "Seguro do carro (anual ÷ 12)", "IPVA + licenciamento (anual ÷ 12)", "Manutenção do carro (revisão, pneus)", "Uber / 99 / táxi", "Transporte público", "Estacionamento"]}, {"name": "SAÚDE", "items": ["Plano de saúde", "Plano odontológico", "Academia / personal / crossfit", "Terapia / psicólogo", "Nutricionista", "Medicamentos de uso contínuo", "Exames e consultas", "Suplementos / vitaminas"]}, {"name": "FAMÍLIA", "items": ["Escola / faculdade dos filhos", "Babá / berçário / creche", "Fraldas e itens de bebê", "Material escolar e uniforme (anual ÷ 12)", "Roupas e calçados dos filhos", "Plano de saúde dos filhos", "Atividades dos filhos (aulas extras)", "Pensão alimentícia (que você paga)", "Pets (ração, vet, banho)", "Presentes (aniversários, Natal)", "Apoio a familiares"]}, {"name": "PESSOAL", "items": ["Cabeleireiro / barbeiro", "Unha / estética", "Cosméticos e higiene", "Roupas e calçados", "Acessórios"]}, {"name": "LAZER", "items": ["Viagens (reserva mensal)", "Cinema, teatro, shows", "Hobbies (curso, material)", "Eventos e festas", "Assinaturas de lazer (clubes, revistas)"]}, {"name": "INVESTIMENTOS E RESERVAS", "items": ["Reserva de emergência", "Poupança", "Previdência privada", "Investimentos em renda variável", "Outros aportes"]}, {"name": "DÍVIDAS E FINANCIAMENTOS", "items": ["Cartão de crédito (rotativo)", "Empréstimo pessoal", "Financiamento imóvel (se não for moradia atual)", "Outras parcelas"]}, {"name": "OUTROS", "items": ["Doações / dízimo", "Assinaturas diversas (apps, jornais)", "Imprevistos / reserva 10%"]}];
 // Lista da Minha Vida antes de 29/10/2026 (salvamentos antigos guardavam só os valores, na ordem desta lista).
 const VIDA_LABELS_V1 = ["Aluguel ou financiamento", "Condomínio", "IPTU (anual ÷ 12)", "Luz / energia", "Água", "Gás (botijão ou encanado)", "Internet", "TV a cabo / streaming (Netflix, Spotify etc)", "Empregada / diarista", "Jardineiro / piscineiro / manutenção", "Móveis, decoração, reformas (reserva mensal)", "Supermercado", "Feira / hortifruti", "Açougue / peixaria", "Padaria / laticínios", "Restaurantes", "Delivery / fast food", "Cafés e lanches fora", "Combustível", "Parcela do carro / financiamento", "Seguro do carro (anual ÷ 12)", "IPVA + licenciamento (anual ÷ 12)", "Manutenção do carro (revisão, pneus)", "Uber / 99 / táxi", "Transporte público", "Estacionamento", "Plano de saúde", "Plano odontológico", "Academia / personal / crossfit", "Terapia / psicólogo", "Nutricionista", "Medicamentos de uso contínuo", "Exames e consultas", "Suplementos / vitaminas", "Escola / faculdade dos filhos", "Atividades dos filhos (aulas extras)", "Pensão alimentícia", "Pets (ração, vet, banho)", "Presentes (aniversários, Natal)", "Apoio a familiares", "Cabeleireiro / barbeiro", "Unha / estética", "Cosméticos e higiene", "Roupas e calçados", "Acessórios", "Viagens (reserva mensal)", "Cinema, teatro, shows", "Hobbies (curso, material)", "Eventos e festas", "Assinaturas de lazer (clubes, revistas)", "Reserva de emergência", "Poupança", "Previdência privada", "Investimentos em renda variável", "Outros aportes", "Cartão de crédito (rotativo)", "Empréstimo pessoal", "Financiamento imóvel (se não for moradia atual)", "Outras parcelas", "Doações / dízimo", "Assinaturas diversas (apps, jornais)", "Imprevistos / reserva 10%"];
@@ -479,7 +488,7 @@ function mergeWithDefaults(modelKey, parsed){
 // above are pure and reused there.
 function markSaved(){
   const ind = document.getElementById('save-indicator');
-  if (ind){ ind.classList.remove('err'); ind.classList.add('flash'); ind.querySelector('.txt').textContent = 'salvo neste aparelho'; }
+  if (ind){ ind.classList.remove('err'); ind.classList.add('flash'); ind.querySelector('.txt').textContent = 'salvo na sua conta'; }
 }
 function markSaving(){
   const ind = document.getElementById('save-indicator');
@@ -487,7 +496,7 @@ function markSaving(){
 }
 function markSaveError(){
   const ind = document.getElementById('save-indicator');
-  if (ind){ ind.classList.add('err'); ind.querySelector('.txt').textContent = 'não deu pra salvar neste navegador'; }
+  if (ind){ ind.classList.add('err'); ind.querySelector('.txt').textContent = 'sem internet — salvo só neste aparelho'; }
 }
 
 /* ---------------------------------------------------------------------- */
@@ -832,17 +841,16 @@ const APP = {
 };
 let CURRENT_USER = null; // {uid, email, nome}
 
-/* ---------- Load/save no navegador ---------- */
+/* ---------- Dados: cópia local + nuvem (Firestore) ---------- */
 
 // Dados da PESSOA (não do negócio): preenchidos uma vez e usados por todas as frentes.
-const CAMPOS_PESSOAIS = ['sonhos','sonhosTaxas','vida','vidaLabels','filhos','meta','rendas','divisaoMeta'];
+const CAMPOS_PESSOAIS = ['sonhos','sonhosTaxas','vida','vidaLabels','filhos','meta','rendas','divisaoMeta','frentesIgnoradas'];
 function pickPessoal(st){ const o = {}; CAMPOS_PESSOAIS.forEach(k => { if (st && st[k] !== undefined) o[k] = st[k]; }); return o; }
-// Contas antigas: cada modelo tinha a própria cópia. Usa a da clínica (ou a primeira que existir).
 function migrarPessoal(){
   if (lsGet('pessoal')) return;
   for (const k of ['prestador','conhecimento','produto']){
     const v = lsGet('modelo:' + k);
-    if (v){ try{ lsSet('pessoal', pickPessoal(v)); }catch(e){} return; }
+    if (v){ lsSet('pessoal', pickPessoal(v)); return; }
   }
 }
 function lerModelo(modelKey){
@@ -854,15 +862,28 @@ function lerModelo(modelKey){
 async function loadState(modelKey){
   return mergeWithDefaults(modelKey, lerModelo(modelKey));
 }
+const refUser = (...p) => doc(dbfs, 'users', CURRENT_USER.uid, ...p);
+
+// Grava os dados pessoais (local + nuvem). Usado pela Visão geral.
+function setPessoal(obj){
+  lsSet('pessoal', obj);
+  if (CURRENT_USER) setDoc(refUser('dados', 'pessoal'), JSON.parse(JSON.stringify(obj))).catch(e => console.warn('pessoal', e));
+}
 
 let SAVE_TIMER = null;
 async function saveState(modelKey, state){
   markSaving();
+  const clean = JSON.parse(JSON.stringify(state));
+  lsSet('modelo:' + modelKey, clean);
+  lsSet('pessoal', pickPessoal(clean));
+  const r = saveResumo(modelKey, clean);
   try{
-    const clean = JSON.parse(JSON.stringify(state));
-    lsSet('modelo:' + modelKey, clean);
-    lsSet('pessoal', pickPessoal(clean));
-    saveResumo(modelKey, clean);
+    await setDoc(refUser('modelos', modelKey), clean);
+    await setDoc(refUser('dados', 'pessoal'), pickPessoal(clean));
+    await setDoc(doc(dbfs, 'resumos', CURRENT_USER.uid), {
+      nome: CURRENT_USER.nome || '', email: CURRENT_USER.email || '',
+      [modelKey]: Object.assign({}, r, {atualizadoEm: serverTimestamp()}),
+    }, {merge:true});
     markSaved();
   }catch(e){
     console.warn('save failed', e);
@@ -871,60 +892,97 @@ async function saveState(modelKey, state){
 }
 function scheduleSave(modelKey, state){
   clearTimeout(SAVE_TIMER);
-  SAVE_TIMER = setTimeout(() => { saveState(modelKey, state); }, 500);
+  SAVE_TIMER = setTimeout(() => { saveState(modelKey, state); }, 700);
 }
 function saveResumo(modelKey, state){
   const r = computeResumo(modelKey, state);
+  const resumo = { meta: r.meta, receita: r.receita, liquido: r.liquido, bateMeta: r.bateMeta, perdaMensal: r.perdaMensal || 0 };
   const all = lsGet('resumos') || {};
-  all[modelKey] = { meta: r.meta, receita: r.receita, liquido: r.liquido, bateMeta: r.bateMeta, atualizadoEm: new Date().toISOString() };
+  all[modelKey] = Object.assign({}, resumo, {atualizadoEm: new Date().toISOString()});
   lsSet('resumos', all);
+  return resumo;
 }
 function persist(){ scheduleSave(APP.model, APP.state); }
 
-/* ---------- Início (sem login) ---------- */
+// Ao entrar: traz tudo da nuvem pra cópia local. Se a nuvem estiver vazia mas este
+// aparelho tiver dados da época sem login, sobe esses dados pra conta.
+async function sincronizarDaNuvem(){
+  const modelos = {};
+  for (const k of Object.keys(MODELS)){
+    const s = await getDoc(refUser('modelos', k));
+    if (s.exists()) modelos[k] = s.data();
+  }
+  const ps = await getDoc(refUser('dados', 'pessoal'));
+  const pessoal = ps.exists() ? ps.data() : null;
+  const temNuvem = Object.keys(modelos).length || pessoal;
+  Object.keys(MODELS).forEach(k => localStorage.removeItem(STORE_PREFIX + 'modelo:' + k));
+  localStorage.removeItem(STORE_PREFIX + 'pessoal');
+  if (temNuvem){
+    Object.entries(modelos).forEach(([k, v]) => lsSet('modelo:' + k, v));
+    if (pessoal) lsSet('pessoal', pessoal);
+    migrarPessoal();
+  } else {
+    let achou = false;
+    for (const k of Object.keys(MODELS)){
+      const v = lsGetLegacy('modelo:' + k);
+      if (v){ lsSet('modelo:' + k, v); achou = true; }
+    }
+    const p = lsGetLegacy('pessoal'); if (p) lsSet('pessoal', p);
+    // os dados da época sem login vão pra PRIMEIRA conta que entrar neste aparelho, e só pra ela
+    ['pessoal','resumos','rapido'].concat(Object.keys(MODELS).map(k => 'modelo:' + k)).forEach(k => localStorage.removeItem(LEGACY_PREFIX + k));
+    migrarPessoal();
+    if (achou){ // sobe os dados deste aparelho pra conta
+      for (const k of Object.keys(MODELS)){
+        const v = lsGet('modelo:' + k);
+        if (v){ const st = mergeWithDefaults(k, lerModelo(k)); await saveState(k, st); }
+      }
+    }
+  }
+  const rs = {};
+  Object.keys(MODELS).forEach(k => { if (lsGet('modelo:' + k)){ const st = mergeWithDefaults(k, lerModelo(k)); rs[k] = saveResumo(k, st); } });
+  APP.menuResumo = rs;
+}
+
+/* ---------- Sessão ---------- */
 
 function initApp(){
-  migrarPessoal();
-  CURRENT_USER = { uid: 'local', email: '', nome: '' };
-  APP.view = 'menu';
-  render();
-  loadMenuResumo();
-}
-
-async function loadMenuResumo(){
-  APP.menuResumo = lsGet('resumos') || {};
-  if (APP.view === 'menu') render();
-}
-
-/* ---------- Backup (levar os dados pra outro aparelho) ---------- */
-
-function baixarBackup(){
-  const dados = { app:'precifica', versao:2, geradoEm:new Date().toISOString(), modelos:{}, resumos: lsGet('resumos') || {}, pessoal: lsGet('pessoal') || null };
-  Object.keys(MODELS).forEach(k => { const v = lsGet('modelo:' + k); if (v) dados.modelos[k] = v; });
-  const blob = new Blob([JSON.stringify(dados, null, 1)], {type:'application/json'});
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'precifica-backup-' + new Date().toISOString().slice(0,10) + '.json';
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-}
-function carregarBackup(){
-  const inp = document.createElement('input');
-  inp.type = 'file'; inp.accept = '.json,application/json';
-  inp.addEventListener('change', async () => {
-    const f = inp.files && inp.files[0]; if (!f) return;
+  APP.view = 'loading'; render();
+  onAuthStateChanged(auth, async (u) => {
+    if (!u){ CURRENT_USER = null; STORE_PREFIX = LEGACY_PREFIX; APP.view = 'login'; APP.model = null; APP.state = null; render(); return; }
+    const email = (u.email || '').toLowerCase();
+    CURRENT_USER = { uid: u.uid, email, nome: '', admin: isAdminEmail(email) };
+    STORE_PREFIX = 'precifica:u:' + u.uid + ':';
+    if (!u.emailVerified){ APP.view = 'verificar'; render(); return; }
+    APP.view = 'loading'; render();
     try{
-      const dados = JSON.parse(await f.text());
-      if (!dados || dados.app !== 'precifica' || !dados.modelos) throw new Error('arquivo inválido');
-      if (!confirm('Carregar este backup? Os dados preenchidos neste aparelho serão substituídos pelos do arquivo.')) return;
-      Object.keys(dados.modelos).forEach(k => { if (MODELS[k]) lsSet('modelo:' + k, dados.modelos[k]); });
-      lsSet('resumos', dados.resumos || {});
-      if (dados.pessoal) lsSet('pessoal', dados.pessoal); else { localStorage.removeItem(STORE_PREFIX + 'pessoal'); migrarPessoal(); }
-      loadMenuResumo();
-      alert('Backup carregado.');
-    }catch(e){ alert('Não consegui ler esse arquivo. Escolha um backup baixado pelo próprio Precifica.'); }
+      if (!CURRENT_USER.admin){
+        const c = await getDoc(doc(dbfs, 'credenciados', email));
+        if (!c.exists()){ APP.view = 'semacesso'; render(); return; }
+        CURRENT_USER.nome = c.data().nome || '';
+      }
+      const perfil = await getDoc(refUser());
+      if (perfil.exists() && perfil.data().nome) CURRENT_USER.nome = perfil.data().nome;
+      if (!CURRENT_USER.nome) CURRENT_USER.nome = email.split('@')[0];
+      if (!perfil.exists()) await setDoc(refUser(), {nome: CURRENT_USER.nome, email, criadoEm: serverTimestamp()});
+      await sincronizarDaNuvem();
+    }catch(e){
+      console.warn('init', e);
+      APP.view = 'semacesso'; APP.authMsg = 'Não consegui carregar seus dados (' + ((e && e.code) || 'erro') + '). Tente de novo em instantes.'; render(); return;
+    }
+    APP.view = 'menu'; render();
   });
-  inp.click();
+}
+async function doLogout(){ try{ await signOut(auth); }catch(e){ console.warn(e); } }
+async function loadMenuResumo(){ if (APP.view === 'menu') render(); }
+
+/* ---------- Primeiro acesso / senha ---------- */
+function senhaAleatoria(){ const a = new Uint32Array(4); crypto.getRandomValues(a); return Array.from(a, n => n.toString(36)).join('') + 'A!9'; }
+// Cria a conta (se ainda não existir) sem deslogar ninguém e manda o e-mail pra pessoa criar a senha.
+async function criarContaEConvidar(email){
+  try{ await createUserWithEmailAndPassword(authCred, email, senhaAleatoria()); }
+  catch(e){ if (!e || e.code !== 'auth/email-already-in-use') throw e; }
+  finally{ try{ await signOut(authCred); }catch(e){} }
+  await sendPasswordResetEmail(auth, email);
 }
 
 /* ---------- Navegação dentro do app ---------- */
@@ -953,7 +1011,7 @@ function goStep(stepKey){
   window.scrollTo(0,0);
 }
 function resetModelData(){
-  if (!confirm('Isso vai apagar todos os dados preenchidos neste modelo (neste aparelho) e voltar aos exemplos. Quer continuar?')) return;
+  if (!confirm('Isso vai apagar todos os dados preenchidos neste modelo (na sua conta) e voltar aos exemplos. Quer continuar?')) return;
   const fresh = defaultState(APP.model);
   APP.state = fresh;
   saveState(APP.model, fresh);
@@ -968,6 +1026,11 @@ function render(){
   const root = document.getElementById('app');
   root.innerHTML = '';
   if (APP.view === 'loading'){ root.appendChild(renderLoading()); return; }
+  if (APP.view === 'login'){ root.appendChild(renderLogin()); return; }
+  if (APP.view === 'verificar'){ root.appendChild(renderVerificar()); return; }
+  if (APP.view === 'semacesso'){ root.appendChild(renderSemAcesso()); return; }
+  if (APP.view === 'credenciamento' && CURRENT_USER && CURRENT_USER.admin){ root.appendChild(renderTopbar()); root.appendChild(renderCredenciamento()); return; }
+  if (APP.view === 'alunos' && CURRENT_USER && CURRENT_USER.admin){ root.appendChild(renderTopbar()); root.appendChild(renderAlunos()); return; }
   if (APP.view === 'menu'){ root.appendChild(renderTopbar()); root.appendChild(renderMenu()); return; }
   if (APP.view === 'rapido'){ root.appendChild(renderTopbar()); root.appendChild(renderRapido()); window.scrollTo(0,0); return; }
   if (APP.view === 'geral'){ root.appendChild(renderTopbar()); root.appendChild(renderVisaoGeral()); window.scrollTo(0,0); return; }
@@ -988,8 +1051,225 @@ function renderLoading(){
 }
 
 /* ---------------------------------------------------------------------- */
-/* Login / Cadastro                                                        */
+/* Login, confirmação de e-mail e sem acesso                               */
 /* ---------------------------------------------------------------------- */
+
+function authErrorPt(err){
+  const code = (err && err.code) || '';
+  const map = {
+    'auth/invalid-email': 'E-mail inválido.',
+    'auth/user-disabled': 'Essa conta foi desativada.',
+    'auth/user-not-found': 'Não achamos uma conta com esse e-mail.',
+    'auth/wrong-password': 'E-mail ou senha incorretos.',
+    'auth/invalid-credential': 'E-mail ou senha incorretos. Se é o seu primeiro acesso, clique em "Primeiro acesso ou esqueci a senha".',
+    'auth/too-many-requests': 'Muitas tentativas. Espere um pouco e tente de novo.',
+    'auth/network-request-failed': 'Sem conexão com a internet no momento.',
+    'auth/missing-email': 'Digite o seu e-mail.',
+  };
+  return map[code] || ('Não deu certo (' + (code || 'erro desconhecido') + '). Tente de novo.');
+}
+
+function authShell(children){
+  const wrap = el('div', {class:'auth-shell'});
+  const card = el('div', {class:'auth-card'});
+  card.appendChild(el('div', {class:'auth-brand'}, ['Precifica', el('span',{class:'sub'},['método 4C'])]));
+  children.forEach(c => c && card.appendChild(c));
+  wrap.appendChild(card);
+  return wrap;
+}
+
+function renderLogin(){
+  const email = el('input', {class:'auth-input', type:'email', placeholder:'voce@email.com', autocomplete:'username'});
+  const senha = el('input', {class:'auth-input', type:'password', placeholder:'sua senha', autocomplete:'current-password'});
+  const msg = el('div', {class: APP.authOk ? 'auth-ok' : 'auth-error', style: APP.authMsg ? '' : 'display:none;'}, [APP.authMsg || '']);
+  const mostrar = (t, ok) => { APP.authMsg = t; APP.authOk = !!ok; msg.textContent = t; msg.className = ok ? 'auth-ok' : 'auth-error'; msg.style.display = t ? '' : 'none'; };
+  const entrar = el('button', {class:'btn btn-primary auth-submit', type:'button'}, ['Entrar']);
+  const go = async () => {
+    entrar.disabled = true; mostrar('');
+    try{ await signInWithEmailAndPassword(auth, email.value.trim(), senha.value); }
+    catch(e){ mostrar(authErrorPt(e)); }
+    finally{ entrar.disabled = false; }
+  };
+  entrar.addEventListener('click', go);
+  senha.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+  const primeiro = el('button', {type:'button', class:'auth-link'}, ['Primeiro acesso ou esqueci a senha']);
+  primeiro.addEventListener('click', async () => {
+    const e = email.value.trim().toLowerCase();
+    if (!e){ mostrar('Digite o seu e-mail acima e clique de novo.'); return; }
+    try{
+      if (isAdminEmail(e)) await criarContaEConvidar(e);
+      else await sendPasswordResetEmail(auth, e);
+      mostrar('Pronto! Se o seu e-mail estiver credenciado, chegou um link pra você criar a senha. Olhe também o spam.', true);
+    }catch(err){ mostrar(authErrorPt(err)); }
+  });
+  return authShell([
+    el('h2', {}, ['Entrar no Precifica']),
+    el('p', {class:'sub'}, ['Seu acesso é liberado pela equipe quando você se inscreve. No primeiro acesso, clique em "Primeiro acesso" pra criar sua senha.']),
+    msg,
+    el('div', {class:'auth-field'}, [el('label',{},['E-mail']), email]),
+    el('div', {class:'auth-field'}, [el('label',{},['Senha']), senha]),
+    entrar,
+    el('div', {class:'auth-forgot', style:'text-align:center;margin-top:12px;'}, [primeiro]),
+  ]);
+}
+
+function renderVerificar(){
+  const u = auth.currentUser;
+  const msg = el('div', {class:'auth-ok', style:'display:none;'});
+  return authShell([
+    el('h2', {}, ['Confirme o seu e-mail']),
+    el('p', {class:'sub'}, ['Por segurança, precisamos confirmar que ', el('b', {}, [u ? u.email : 'este e-mail']), ' é seu. Enviamos um link — clique nele e depois volte aqui.']),
+    msg,
+    el('button', {class:'btn btn-primary auth-submit', type:'button', onclick: async () => {
+      await u.reload(); await u.getIdToken(true);
+      if (u.emailVerified){ initApp(); } else { msg.textContent = 'Ainda não aparece como confirmado. Clique no link do e-mail e tente de novo.'; msg.style.display = ''; }
+    }}, ['Já confirmei']),
+    el('div', {style:'display:flex;justify-content:space-between;margin-top:12px;'}, [
+      el('button', {type:'button', class:'auth-link', onclick: async () => {
+        try{ await sendEmailVerification(u); msg.textContent = 'Link enviado. Olhe também o spam.'; msg.style.display = ''; }
+        catch(e){ msg.textContent = authErrorPt(e); msg.style.display = ''; }
+      }}, ['Enviar o link de novo']),
+      el('button', {type:'button', class:'auth-link', onclick: doLogout}, ['Sair']),
+    ]),
+  ]);
+}
+
+function renderSemAcesso(){
+  return authShell([
+    el('h2', {}, ['Acesso ainda não liberado']),
+    el('p', {class:'sub'}, [APP.authMsg || 'O seu e-mail ainda não está credenciado no Precifica. Se você já se inscreveu, fale com a equipe pra liberar o acesso.']),
+    el('button', {class:'btn btn-secondary auth-submit', type:'button', onclick: doLogout}, ['Sair']),
+  ]);
+}
+
+/* ---------------------------------------------------------------------- */
+/* Admin: Credenciamento                                                   */
+/* ---------------------------------------------------------------------- */
+
+function adminHead(titulo, desc){
+  return el('div', {class:'home-hero'}, [el('div', {class:'eyebrow'}, ['Administração']), el('h1', {class:'disp'}, [titulo]), el('p', {}, [desc])]);
+}
+
+function renderCredenciamento(){
+  const wrap = el('div', {class:'home admin'});
+  wrap.appendChild(adminHead('Credenciamento', 'Cadastre aqui cada pessoa que se inscreveu. Ela recebe um e-mail pra criar a senha e já entra com o acesso liberado.'));
+  const nome = el('input', {class:'inp text-left', placeholder:'Nome completo'});
+  const email = el('input', {class:'inp text-left', type:'email', placeholder:'e-mail usado na inscrição'});
+  const msg = el('div', {class:'help', style:'margin-top:8px;'});
+  const add = el('button', {class:'btn btn-primary', type:'button'}, ['Credenciar e enviar convite']);
+  add.addEventListener('click', async () => {
+    const e = email.value.trim().toLowerCase(), n = nome.value.trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)){ msg.textContent = 'Confira o e-mail.'; return; }
+    add.disabled = true; msg.textContent = 'Credenciando…';
+    try{
+      await setDoc(doc(dbfs, 'credenciados', e), {nome:n, email:e, criadoEm: serverTimestamp(), criadoPor: CURRENT_USER.email});
+      await criarContaEConvidar(e);
+      msg.textContent = '✅ ' + (n || e) + ' credenciado(a). O convite pra criar a senha foi enviado pra ' + e + '.';
+      nome.value = ''; email.value = ''; carregar();
+    }catch(err){ msg.textContent = 'Não deu certo: ' + ((err && err.code) || err) + '.'; }
+    finally{ add.disabled = false; }
+  });
+  wrap.appendChild(el('div', {class:'cred-form'}, [nome, email, add]));
+  wrap.appendChild(msg);
+
+  const busca = el('input', {class:'inp text-left', placeholder:'buscar por nome ou e-mail', style:'margin-top:22px;max-width:360px;'});
+  wrap.appendChild(busca);
+  const lista = el('div', {class:'geral-tabela', style:'margin-top:10px;'});
+  wrap.appendChild(lista);
+  let itens = [];
+  function desenhar(){
+    const q = busca.value.trim().toLowerCase();
+    lista.innerHTML = '';
+    lista.appendChild(el('div', {class:'geral-row cred-row geral-head'}, ['Nome','E-mail','Credenciado em','Situação',''].map(x => el('span', {}, [x]))));
+    const vis = itens.filter(c => !q || (c.nome||'').toLowerCase().includes(q) || c.email.includes(q));
+    if (!vis.length) lista.appendChild(el('div', {class:'geral-row cred-row'}, [el('span', {class:'help'}, [itens.length ? 'Ninguém encontrado.' : 'Ninguém credenciado ainda.'])]));
+    vis.forEach(c => {
+      lista.appendChild(el('div', {class:'geral-row cred-row'}, [
+        el('span', {}, [el('b', {}, [c.nome || '—'])]),
+        el('span', {}, [c.email]),
+        el('span', {}, [fmtWhen(c.criadoEm)]),
+        el('span', {}, [c.ativo ? '✅ já acessou' : '⏳ aguardando 1º acesso']),
+        el('span', {style:'display:flex;gap:6px;'}, [
+          el('button', {class:'btn-ghost btn-sm', type:'button', onclick: async (ev) => {
+            ev.target.disabled = true;
+            try{ await sendPasswordResetEmail(auth, c.email); ev.target.textContent = 'enviado ✔'; } catch(e){ ev.target.textContent = 'erro'; }
+          }}, ['reenviar convite']),
+          el('button', {class:'btn-ghost btn-sm', type:'button', onclick: async () => {
+            if (!confirm('Remover o acesso de ' + (c.nome || c.email) + '? Os dados dela continuam guardados; ela só não consegue mais entrar.')) return;
+            await deleteDoc(doc(dbfs, 'credenciados', c.email)); carregar();
+          }}, ['remover acesso']),
+        ]),
+      ]));
+    });
+  }
+  busca.addEventListener('input', desenhar);
+  async function carregar(){
+    try{
+      const [cs, rs] = await Promise.all([getDocs(collection(dbfs, 'credenciados')), getDocs(collection(dbfs, 'resumos'))]);
+      const ativos = new Set(); rs.forEach(d => { const e = (d.data().email||'').toLowerCase(); if (e) ativos.add(e); });
+      itens = []; cs.forEach(d => itens.push(Object.assign({email:d.id}, d.data(), {ativo: ativos.has(d.id)})));
+      itens.sort((a,b) => (a.nome||a.email).localeCompare(b.nome||b.email, 'pt-BR'));
+    }catch(e){ itens = []; msg.textContent = 'Não consegui carregar a lista (' + ((e && e.code) || e) + '). As regras do Firebase já foram atualizadas?'; }
+    desenhar();
+  }
+  desenhar(); carregar();
+  return wrap;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Admin: Alunos (os dados de todo mundo)                                  */
+/* ---------------------------------------------------------------------- */
+
+function renderAlunos(){
+  const wrap = el('div', {class:'home admin'});
+  wrap.appendChild(adminHead('Alunos', 'Os números de cada pessoa credenciada, por frente. Atualiza sozinho sempre que o aluno mexe no Precifica.'));
+  const acoes = el('div', {style:'display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;'});
+  wrap.appendChild(acoes);
+  const lista = el('div', {class:'geral-tabela'});
+  wrap.appendChild(lista);
+  lista.appendChild(el('div', {class:'geral-row'}, [el('span', {class:'help'}, ['carregando…'])]));
+  const frenteTxt = (r) => r ? fmtBRL(r.liquido) + ' / ' + fmtBRL(r.meta) + (r.bateMeta ? ' ✅' : ' ❌') : '—';
+  let linhas = [];
+  (async () => {
+    try{
+      const [rs, cs] = await Promise.all([getDocs(collection(dbfs, 'resumos')), getDocs(collection(dbfs, 'credenciados'))]);
+      const porEmail = {};
+      rs.forEach(d => { const v = d.data(); porEmail[(v.email||'').toLowerCase()] = v; });
+      cs.forEach(d => { const c = d.data(); if (!porEmail[d.id]) porEmail[d.id] = {nome:c.nome, email:d.id, _semDados:true}; else if (!porEmail[d.id].nome) porEmail[d.id].nome = c.nome; });
+      linhas = Object.values(porEmail).filter(v => v.email).map(v => {
+        const perda = Object.keys(MODELS).reduce((s,k) => s + ((v[k] && v[k].perdaMensal) || 0), 0);
+        const ult = Object.keys(MODELS).map(k => v[k] && v[k].atualizadoEm).filter(Boolean).sort((a,b) => (b.seconds||0) - (a.seconds||0))[0];
+        return Object.assign({}, v, {perda, ult});
+      }).sort((a,b) => b.perda - a.perda);
+    }catch(e){
+      lista.innerHTML = ''; lista.appendChild(el('div', {class:'geral-row'}, [el('span', {class:'help'}, ['Não consegui carregar (' + ((e && e.code) || e) + '). As regras do Firebase já foram atualizadas?'])])); return;
+    }
+    lista.innerHTML = '';
+    lista.appendChild(el('div', {class:'geral-row alunos-row geral-head'}, ['Aluno','Clínica (lucro / meta)','Cursos','Produtos','Deixando na mesa','Atualizado'].map(x => el('span', {}, [x]))));
+    if (!linhas.length) lista.appendChild(el('div', {class:'geral-row'}, [el('span', {class:'help'}, ['Ainda não há alunos.'])]));
+    linhas.forEach(v => lista.appendChild(el('div', {class:'geral-row alunos-row'}, [
+      el('span', {}, [el('b', {}, [v.nome || '—']), el('div', {class:'help', style:'margin:0;'}, [v.email])]),
+      el('span', {class:'mono'}, [v._semDados ? 'ainda não preencheu' : frenteTxt(v.prestador)]),
+      el('span', {class:'mono'}, [frenteTxt(v.conhecimento)]),
+      el('span', {class:'mono'}, [frenteTxt(v.produto)]),
+      el('span', {class:'mono', style: v.perda > 0 ? 'color:var(--red);font-weight:700;' : ''}, [v.perda > 0 ? fmtBRL(v.perda) + '/mês' : '—']),
+      el('span', {}, [v.ult ? fmtWhen(v.ult) : '—']),
+    ])));
+    acoes.appendChild(el('button', {class:'btn btn-secondary btn-sm', type:'button', onclick:()=>{
+      const cab = ['Nome','E-mail','Clínica lucro','Clínica meta','Cursos lucro','Cursos meta','Produtos lucro','Produtos meta','Deixando na mesa/mês'];
+      const n = (x) => x == null ? '' : String(Math.round(x*100)/100).replace('.', ',');
+      const rows = linhas.map(v => [v.nome||'', v.email, n(v.prestador&&v.prestador.liquido), n(v.prestador&&v.prestador.meta), n(v.conhecimento&&v.conhecimento.liquido), n(v.conhecimento&&v.conhecimento.meta), n(v.produto&&v.produto.liquido), n(v.produto&&v.produto.meta), n(v.perda)]);
+      const csv = [cab].concat(rows).map(r => r.map(c => '"' + String(c).replace(/"/g,'""') + '"').join(';')).join('\n');
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob(['﻿' + csv], {type:'text/csv;charset=utf-8'}));
+      a.download = 'precifica-alunos-' + new Date().toISOString().slice(0,10) + '.csv';
+      document.body.appendChild(a); a.click(); a.remove();
+    }}, ['⬇ Baixar planilha (Excel)']));
+    acoes.appendChild(el('span', {class:'help', style:'margin:0;align-self:center;'}, [linhas.length + ' pessoa(s) · ordenado por quem está deixando mais dinheiro na mesa']));
+  })();
+  return wrap;
+}
+
 
 /* ---------------------------------------------------------------------- */
 /* Topbar                                                                  */
@@ -1004,11 +1284,19 @@ function renderTopbar(){
   }
   bar.appendChild(el('div', {class:'topbar-spacer'}));
   if (APP.view === 'wizard'){
-    const ind = el('span', {class:'save-indicator', id:'save-indicator'}, [el('span',{class:'dot'}), el('span',{class:'txt'},['salvo neste aparelho'])]);
+    const ind = el('span', {class:'save-indicator', id:'save-indicator'}, [el('span',{class:'dot'}), el('span',{class:'txt'},['salvo na sua conta'])]);
     bar.appendChild(ind);
     bar.appendChild(el('button', {class:'btn-ghost', onclick: goHome}, ['☰ Menu principal']));
     bar.appendChild(el('button', {class:'btn-ghost', onclick: resetModelData}, ['Limpar dados']));
+  } else if (APP.view !== 'menu'){
+    bar.appendChild(el('button', {class:'btn-ghost', onclick: goHome}, ['☰ Início']));
   }
+  if (CURRENT_USER && CURRENT_USER.admin){
+    bar.appendChild(el('button', {class:'btn-ghost' + (APP.view==='credenciamento'?' on':''), onclick:()=>{ APP.view='credenciamento'; APP.model=null; APP.state=null; render(); }}, ['👥 Credenciamento']));
+    bar.appendChild(el('button', {class:'btn-ghost' + (APP.view==='alunos'?' on':''), onclick:()=>{ APP.view='alunos'; APP.model=null; APP.state=null; render(); }}, ['📈 Alunos']));
+  }
+  if (CURRENT_USER && APP.view === 'menu') bar.appendChild(el('span', {style:'font-size:13px;color:var(--ink-soft);'}, ['Olá, ', el('b',{style:'color:var(--ink);'},[CURRENT_USER.nome])]));
+  if (CURRENT_USER) bar.appendChild(el('button', {class:'btn-ghost', onclick: doLogout}, ['Sair']));
   return bar;
 }
 
@@ -1019,7 +1307,8 @@ function renderTopbar(){
 function fmtWhen(ts){
   try{
     if (!ts) return '';
-    const d = ts.toDate ? ts.toDate() : new Date(ts);
+    const d = ts.toDate ? ts.toDate() : (ts.seconds != null ? new Date(ts.seconds * 1000) : new Date(ts));
+    if (isNaN(d)) return '';
     return d.toLocaleDateString('pt-BR', {day:'2-digit', month:'2-digit', year:'numeric'});
   }catch(e){ return ''; }
 }
@@ -1073,14 +1362,9 @@ function renderMenu(){
   });
   wrap.appendChild(outros);
 
-  const userbar = el('div', {class:'menu-userbar', style:'margin-top:28px;'});
-  userbar.appendChild(el('span', {class:'who'}, ['Vai usar em outro computador ou celular? ']));
-  userbar.appendChild(el('button', {class:'btn-ghost', onclick: baixarBackup}, ['⬇ Baixar backup']));
-  userbar.appendChild(el('button', {class:'btn-ghost', onclick: carregarBackup}, ['⬆ Carregar backup']));
-  wrap.appendChild(userbar);
-  wrap.appendChild(el('ul', {class:'note-list', style:'margin-top:14px;max-width:560px;'}, [
-    el('li', {}, ['Seus dados ficam salvos neste navegador. Pra continuar em outro aparelho, baixe o backup e carregue lá.']),
-    el('li', {}, ['Nada é enviado pra internet. Se limpar os dados do navegador, o que foi preenchido some — guarde um backup.']),
+  wrap.appendChild(el('ul', {class:'note-list', style:'margin-top:26px;max-width:560px;'}, [
+    el('li', {}, ['Seus dados ficam salvos na sua conta — dá pra continuar de qualquer computador ou celular.']),
+    el('li', {}, ['Sonhos, vida pessoal e meta valem pra todas as frentes: você preenche uma vez só.']),
   ]));
   return wrap;
 }
@@ -1171,7 +1455,7 @@ function renderVisaoGeral(){
   const somaEl = el('div', {class:'help', style:'margin-top:6px;'});
   const salvarDiv = () => {
     const pes = lsGet('pessoal') || {};
-    pes.divisaoMeta = d; lsSet('pessoal', pes);
+    pes.divisaoMeta = d; setPessoal(pes);
     const soma = ativas.reduce((s,k)=>s + (parseBR(d[k]) || 0), 0);
     somaEl.textContent = 'Soma: ' + fmtNum(soma*100,0) + '%' + (Math.abs(soma-1) > 0.005 ? ' — ajuste pra chegar a 100%.' : ' ✔');
   };
@@ -1201,7 +1485,7 @@ function renderVisaoGeral(){
       c.addEventListener('change', () => {
         const pes = lsGet('pessoal') || {}; const l = new Set(pes.frentesIgnoradas || []);
         if (c.checked) l.delete(k); else l.add(k);
-        pes.frentesIgnoradas = [...l]; lsSet('pessoal', pes); render();
+        pes.frentesIgnoradas = [...l]; setPessoal(pes); render();
       });
       g.appendChild(el('label', {style:'margin-right:14px;cursor:pointer;'}, [c, ' ' + NOME_FRENTE[k]]));
     });
