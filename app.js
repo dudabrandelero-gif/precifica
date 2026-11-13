@@ -193,7 +193,7 @@ const MODELS = {
   },
 };
 
-const STEP_ORDER = ['sonhos','vida','meta','negocio','insumos','hora','calcular','resumo','crescer'];
+const STEP_ORDER = ['regime','sonhos','vida','meta','negocio','insumos','hora','calcular','resumo','crescer'];
 
 function stepsFor(modelKey){
   const m = MODELS[modelKey];
@@ -201,7 +201,7 @@ function stepsFor(modelKey){
 }
 
 const STEP_LABEL = {
-  sonhos:'Meus Sonhos', meta:'Minha Meta', vida:'Minha Vida', negocio:'Meu Negócio',
+  regime:'CPF ou PJ', sonhos:'Meus Sonhos', meta:'Minha Meta', vida:'Minha Vida', negocio:'Meu Negócio',
   insumos:null, hora:'Minha Hora', calcular:null, resumo:'Resumo', crescer:'Rotina de Crescimento',
 };
 /* ---------------------------------------------------------------------- */
@@ -419,6 +419,7 @@ function defaultState(modelKey){
     filhos: 0,
     negocio: negocioFlat(modelKey).map(() => 0),
     negocioLabels: negocioFlat(modelKey).map(it => it.label),
+    regime: defaultRegime(modelKey),
     insumos: defaultInsumos(modelKey),
     hora: defaultHora(modelKey),
     calcular,
@@ -469,6 +470,7 @@ function mergeWithDefaults(modelKey, parsed){
   merged.filhos = parseBR(parsed.filhos) || 0;
   merged.negocio = migrateNegocio(modelKey, parsed, def.negocio);
   merged.negocioLabels = negocioFlat(modelKey).map(it => it.label);
+  merged.regime = normalizeRegime(parsed.regime, modelKey);
   if (!merged.sonhos) merged.sonhos = def.sonhos;
   normalizeSonhos(merged.sonhos);
   merged.sonhosTaxas = Object.assign({}, def.sonhosTaxas, merged.sonhosTaxas);
@@ -794,7 +796,150 @@ function metaParte(state, modelKey){
   return Math.max(0, Math.min(1, parseBR(d[modelKey])));
 }
 
+/* ---------------------------------------------------------------------- */
+/* CPF ou PJ — impostos e sociedade                                        */
+/* ---------------------------------------------------------------------- */
+// Valores de 2026. Fontes: Lei 15.270/2025 (redução do IR até R$ 7.350), tabela
+// mensal do IRPF, teto do INSS (R$ 8.475,55), salário mínimo (R$ 1.621) e as
+// tabelas do Simples Nacional (LC 123/2006). Revisar todo começo de ano.
+const TAX2026 = {
+  teto: 8475.55, salMin: 1621, simplificado: 607.20,
+  ir: [[2428.80,0,0],[2826.65,.075,182.16],[3751.05,.15,394.16],[4664.68,.225,675.49],[Infinity,.275,908.73]],
+  divLimite: 50000, divAliq: .10,
+};
+const SIMPLES = {
+  I:   [[180000,.04,0],[360000,.073,5940],[720000,.095,13860],[1800000,.107,22500],[3600000,.143,87300],[4800000,.19,378000]],
+  II:  [[180000,.045,0],[360000,.078,5940],[720000,.10,13860],[1800000,.112,22500],[3600000,.147,85500],[4800000,.30,720000]],
+  III: [[180000,.06,0],[360000,.112,9360],[720000,.135,17640],[1800000,.16,35640],[3600000,.21,125640],[4800000,.33,648000]],
+  V:   [[180000,.155,0],[360000,.18,4500],[720000,.195,9900],[1800000,.205,17100],[3600000,.23,62100],[4800000,.305,540000]],
+};
+const ANEXOS = [
+  {key:'fatorR', label:'Saúde / serviços com Fator R (Anexo III ou V)'},
+  {key:'III', label:'Anexo III (cursos, treinamentos, outros serviços)'},
+  {key:'V', label:'Anexo V'},
+  {key:'I', label:'Anexo I (comércio / revenda)'},
+  {key:'II', label:'Anexo II (indústria / fabricação)'},
+];
+function anexoPadrao(modelKey){ return modelKey === 'produto' ? 'I' : (modelKey === 'conhecimento' ? 'III' : 'fatorR'); }
+function defaultRegime(modelKey){
+  return {tipo:null, anexo:anexoPadrao(modelKey), fat:null, despesas:null, folha:null, issCPF:0, contabPJ:0,
+    socios:[{eu:true, nome:'Você', pct:1, pl:TAX2026.salMin}]};
+}
+function normalizeRegime(r, modelKey){
+  const d = defaultRegime(modelKey);
+  r = Object.assign(d, r || {});
+  if (!Array.isArray(r.socios) || !r.socios.length) r.socios = d.socios;
+  if (!r.socios.some(x => x.eu)) r.socios[0].eu = true;
+  return r;
+}
+// IR mensal (pessoa física). "bruto" decide a redução de 2026; deduções legais
+// (INSS, livro-caixa) ou o desconto simplificado — o que for melhor.
+function irMensal(bruto, deducoes){
+  bruto = Math.max(0, bruto || 0);
+  const base = Math.max(0, bruto - Math.max(deducoes || 0, TAX2026.simplificado));
+  const f = TAX2026.ir.find(x => base <= x[0]);
+  let t = Math.max(0, base * f[1] - f[2]);
+  const red = bruto <= 5000 ? 312.89 : (bruto <= 7350 ? Math.max(0, 978.62 - 0.133145 * bruto) : 0);
+  return Math.max(0, t - red);
+}
+function simplesAliquota(anexo, rbt12){
+  const tab = SIMPLES[anexo]; if (!tab || rbt12 <= 0) return {efetiva:0, nominal:0, faixa:0, acima:false};
+  const i = tab.findIndex(x => rbt12 <= x[0]);
+  const acima = i < 0;
+  const f = tab[acima ? tab.length - 1 : i];
+  return {efetiva: Math.max(0, (rbt12 * f[1] - f[2]) / rbt12), nominal: f[1], faixa: (acima ? tab.length : i + 1), acima};
+}
+const FOLHA_LABELS = ['Secretária / recepcionista (salário + encargos)', 'Auxiliar técnico (enfermeiro, aux. odonto, estagiário)',
+  'Salários (CLT) — base total', 'Encargos e benefícios (≈70% do salário)'];
+function regimeAutos(modelKey, state){
+  const base = computeResumoBase(modelKey, state);
+  const neg = negocioFlat(modelKey);
+  const v = (lbl) => { const i = neg.findIndex(x => x.label === lbl); return i < 0 ? 0 : parseBR((state.negocio||[])[i]); };
+  let despesas = sumNegocio(state);
+  if (modelKey === 'prestador'){
+    despesas += parseBR(state.materialMensal);
+    despesas += (base.calc.rows || []).reduce((s, r) => s + parseBR(r.outros) * parseBR(r.atend), 0);
+  }
+  return {fat: base.receita || 0, despesas, folha: FOLHA_LABELS.reduce((s, l) => s + v(l), 0)};
+}
+function calcRegime(modelKey, state){
+  const g = normalizeRegime(state.regime, modelKey);
+  const auto = regimeAutos(modelKey, state);
+  const fat = g.fat != null ? parseBR(g.fat) : auto.fat;
+  const despesas = g.despesas != null ? parseBR(g.despesas) : auto.despesas;
+  const folha = g.folha != null ? parseBR(g.folha) : auto.folha;
+  // --- CPF (autônomo, carnê-leão) ---
+  const inssCPF = .20 * Math.min(fat, TAX2026.teto);
+  const irCPF = irMensal(fat, despesas + inssCPF);
+  const issCPF = parseBR(g.issCPF);
+  const totCPF = inssCPF + irCPF + issCPF;
+  const cpf = {inss: inssCPF, ir: irCPF, iss: issCPF, total: totCPF, pct: safeDiv(totCPF, fat), sobra: fat - despesas - totCPF};
+  // --- PJ (Simples Nacional) ---
+  const socios = g.socios;
+  const somaPl = socios.reduce((s, x) => s + parseBR(x.pl), 0);
+  const fatorR = safeDiv(somaPl + folha, fat);
+  const anexo = g.anexo === 'fatorR' ? (fatorR >= .28 ? 'III' : 'V') : g.anexo;
+  const al = simplesAliquota(anexo, fat * 12);
+  const das = fat * al.efetiva;
+  const contab = parseBR(g.contabPJ);
+  const pool = fat - despesas - das - contab - somaPl;
+  const ss = socios.map(x => {
+    const pl = parseBR(x.pl), pct = parseBR(x.pct);
+    const inss = .11 * Math.min(pl, TAX2026.teto);
+    const ir = irMensal(pl, inss);
+    const div = Math.max(0, pool) * pct;
+    const ret = div > TAX2026.divLimite ? div * TAX2026.divAliq : 0;
+    return {nome: x.eu ? (x.nome || 'Você') : (x.nome || 'Sócio'), eu: !!x.eu, pct, pl, inss, ir, div, ret, leva: pl - inss - ir + div - ret};
+  });
+  const totPJ = das + ss.reduce((s, x) => s + x.inss + x.ir + x.ret, 0);
+  const pj = {anexo, fatorR, aliquota: al.efetiva, nominal: al.nominal, faixa: al.faixa, acimaLimite: al.acima, das, contab, pool, somaPl,
+    socios: ss, total: totPJ, pct: safeDiv(totPJ, fat), sobra: ss.reduce((s, x) => s + x.leva, 0),
+    plMinFatorR: Math.max(0, .28 * fat - folha)};
+  const somaPct = socios.reduce((s, x) => s + parseBR(x.pct), 0);
+  return {g, fat, despesas, folha, auto, cpf, pj, somaPct, sociedade: socios.length > 1};
+}
+function ehSociedade(state){
+  const g = state && state.regime;
+  return !!(g && g.tipo === 'pj' && Array.isArray(g.socios) && g.socios.length > 1);
+}
+// Lucro que a clínica precisa dar pra TODOS os sócios baterem a meta,
+// respeitando a % de cada um (quem precisa de mais em relação à sua % puxa a conta).
+function metaSociedade(state, metaSeu){
+  if (!ehSociedade(state)) return metaSeu;
+  const ss = state.regime.socios;
+  const somaPl = ss.reduce((s, x) => s + parseBR(x.pl), 0);
+  let maior = 0;
+  ss.forEach(x => {
+    const pct = parseBR(x.pct); if (pct <= 0) return;
+    const meta = x.eu ? metaSeu : parseBR(x.meta);
+    maior = Math.max(maior, (meta - parseBR(x.pl)) / pct);
+  });
+  return somaPl + maior;
+}
+// Quanto do lucro total fica com VOCÊ (pró-labore + sua % do que sobra).
+function parteSua(state, liquido){
+  if (!ehSociedade(state)) return liquido;
+  const ss = state.regime.socios;
+  const eu = ss.find(x => x.eu) || ss[0];
+  const somaPl = ss.reduce((s, x) => s + parseBR(x.pl), 0);
+  return parseBR(eu.pl) + parseBR(eu.pct) * (liquido - somaPl);
+}
+function lucroSeu(r){ return r && r.liquidoSeu != null ? r.liquidoSeu : (r ? r.liquido : 0); }
 function computeResumo(modelKey, state){
+  const r = computeResumoBase(modelKey, state);
+  r.metaSeu = r.meta;
+  r.liquidoSeu = r.liquido;
+  if (ehSociedade(state)){
+    r.meta = metaSociedade(state, r.metaSeu);
+    r.bateMeta = r.liquido >= r.meta;
+    r.diff = Math.abs(r.liquido - r.meta);
+    r.liquidoSeu = parteSua(state, r.liquido);
+    r.sociedade = true;
+  }
+  return r;
+}
+
+function computeResumoBase(modelKey, state){
   const horaC = computeHora(modelKey, state);
   const calc = computeCalcAll(modelKey, state.calcular, horaC, state);
   const metaTotal = computeMeta(state);
@@ -1036,6 +1181,8 @@ function selectModel(modelKey){
   render(); // mostra loading
   loadState(modelKey).then(st => {
     APP.state = st;
+    // Primeira vez neste modelo: começa escolhendo CPF ou PJ.
+    if (!(st.regime && st.regime.tipo)) APP.step = 'regime';
     render();
   });
 }
@@ -1459,7 +1606,7 @@ function dadosFrente(k){
   if (k === 'prestador') horasSemana = (parseBR(h.diasUteis)||0) * (parseBR(h.horasDia)||0);
   if (k === 'conhecimento') horasSemana = (parseBR(h.diasUteis)||0) * (parseBR(h.horasProdutivasDia)||0);
   const horasMesTrabalho = (k === 'prestador' || k === 'conhecimento') ? r.calc.totals.horas : 0;
-  return {k, st, r, horasSemana, horasMesTrabalho, lucroHora: horasMesTrabalho > 0 ? r.liquido / horasMesTrabalho : null};
+  return {k, st, r, horasSemana, horasMesTrabalho, lucroHora: horasMesTrabalho > 0 ? lucroSeu(r) / horasMesTrabalho : null};
 }
 
 function renderVisaoGeral(){
@@ -1478,7 +1625,7 @@ function renderVisaoGeral(){
   const fs = ativas.map(dadosFrente);
   const st0 = fs[0].st;
   const metaNeg = computeMetaNegocio(st0);
-  const lucroTotal = fs.reduce((s,f)=>s + f.r.liquido, 0);
+  const lucroTotal = fs.reduce((s,f)=>s + lucroSeu(f.r), 0);
   const receitaTotal = fs.reduce((s,f)=>s + f.r.receita, 0);
   const perdaTotal = fs.reduce((s,f)=>s + (f.r.perdaMensal||0), 0);
   const falta = metaNeg - lucroTotal;
@@ -1499,7 +1646,7 @@ function renderVisaoGeral(){
     t.appendChild(el('div', {class:'geral-row'}, [
       el('span', {}, [el('b', {}, [NOME_FRENTE[f.k]])]),
       el('span', {class:'mono'}, [fmtBRL(f.r.receita)]),
-      el('span', {class:'mono'}, [fmtBRL(f.r.liquido)]),
+      el('span', {class:'mono'}, [fmtBRL(lucroSeu(f.r))]),
       el('span', {class:'mono'}, [f.horasSemana != null ? fmtNum(f.horasSemana,0) + ' h' : '—']),
       el('span', {class:'mono' + (melhor && melhor.k === f.k ? ' geral-best' : '')}, [f.lucroHora != null ? fmtBRL(f.lucroHora) + (melhor && melhor.k === f.k && fs.length > 1 ? ' ⭐' : '') : '—']),
       el('span', {}, [el('button', {class:'btn-ghost btn-sm', type:'button', onclick:()=>selectModel(f.k)}, ['abrir'])]),
@@ -1544,7 +1691,7 @@ function renderVisaoGeral(){
   if (ativas.length > 1){
     box.appendChild(el('button', {class:'btn btn-secondary btn-sm', type:'button', style:'margin-top:6px;', onclick:()=>{
       const tot = lucroTotal > 0 ? lucroTotal : 0;
-      fs.forEach(f => { d[f.k] = tot ? Math.round(Math.max(0,f.r.liquido)/tot*100)/100 : Math.round(100/fs.length)/100; });
+      fs.forEach(f => { d[f.k] = tot ? Math.round(Math.max(0,lucroSeu(f.r))/tot*100)/100 : Math.round(100/fs.length)/100; });
       salvarDiv(); render();
     }}, ['Dividir conforme o lucro de hoje']));
   }
@@ -1656,6 +1803,7 @@ function renderRapido(){
 /* Stepper lateral (wizard)                                                */
 /* ---------------------------------------------------------------------- */
 
+function escapeHtml(t){ return String(t == null ? '' : t).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function stepTitle(stepKey){
   const m = MODELS[APP.model];
   if (stepKey === 'insumos') return m.insumosLabel;
@@ -1687,7 +1835,7 @@ function renderStepper(){
 function renderStepContent(){
   const panel = el('div', {class:'panel'});
   const fn = {
-    sonhos: renderStepSonhos, meta: renderStepMeta, vida: renderStepVida, negocio: renderStepNegocio,
+    regime: renderStepRegime, sonhos: renderStepSonhos, meta: renderStepMeta, vida: renderStepVida, negocio: renderStepNegocio,
     insumos: renderStepInsumos, hora: renderStepHora, calcular: renderStepCalcular,
     resumo: renderStepResumo, crescer: renderStepCrescer,
   }[APP.step];
@@ -1935,6 +2083,207 @@ function renderStepNegocio(panel){
   box.appendChild(dica);
   const body = panel.querySelector('.panel-body');
   if (body) body.insertBefore(box, body.firstChild);
+}
+
+/* ---------------------------------------------------------------------- */
+/* Etapa: CPF ou PJ                                                        */
+/* ---------------------------------------------------------------------- */
+
+function renderStepRegime(panel){
+  const st = APP.state, model = APP.model;
+  st.regime = normalizeRegime(st.regime, model);
+  const g = st.regime;
+  const $ = (id) => document.getElementById(id);
+  function rerender(){ const y = window.scrollY; render(); requestAnimationFrame(() => window.scrollTo(0, y)); }
+
+  panelHead(panel, 'Antes de começar', 'CPF ou PJ?',
+    'Como você recebe pelo seu trabalho? Isso muda quanto vai de imposto e, se você tem sócios, como o lucro é dividido entre vocês.');
+  const body = el('div', {class:'panel-body'});
+
+  // ---------- escolha ----------
+  const ops = el('div', {class:'reg-ops'});
+  const op = (key, titulo, txt) => {
+    const b = el('button', {type:'button', class:'reg-op' + (g.tipo === key ? ' on' : '')}, [
+      el('div', {class:'reg-op-t'}, [titulo]), el('div', {class:'help', style:'margin:0;'}, [txt])]);
+    b.addEventListener('click', () => { g.tipo = key; persist(); rerender(); });
+    ops.appendChild(b);
+  };
+  op('cpf', '👤 Pessoa física (CPF)', 'Autônomo. Recebe no seu nome e paga IR pelo carnê-leão + INSS de autônomo.');
+  op('pj', '🏢 Empresa (PJ)', 'Tem CNPJ (Simples Nacional). Sozinho ou em sociedade — com pró-labore e divisão de lucros.');
+  body.appendChild(ops);
+  if (!g.tipo) body.appendChild(el('p', {class:'help'}, ['Ainda não sabe? Escolha qualquer um — lá embaixo o app compara os dois com os seus números.']));
+  if (model === 'produto' && g.tipo === 'cpf') body.appendChild(el('div', {class:'callout'}, ['Vender produto como pessoa física é bem limitado. Na maioria dos casos é preciso CNPJ (MEI ou empresa). Confira com seu contador.']));
+
+  // ---------- sócios ----------
+  if (g.tipo === 'pj'){
+    const box = el('div', {class:'cat-group'});
+    box.appendChild(el('div', {class:'cat-title'}, ['Sócios da empresa']));
+    box.appendChild(el('p', {class:'help'}, ['Cada sócio recebe duas coisas: o ', el('b', {}, ['pró-labore']), ' (o "salário" do sócio, com INSS e IR) e a ', el('b', {}, ['divisão do lucro']), ' (o que sobra, dividido pela % de cada um).']));
+    const tab = el('div', {class:'reg-socios'});
+    tab.appendChild(el('div', {class:'reg-srow reg-shead'}, ['Sócio', '% no lucro', 'Pró-labore (R$/mês)', 'Precisa levar por mês', ''].map(x => el('span', {}, [x]))));
+    g.socios.forEach((x, i) => {
+      const row = el('div', {class:'reg-srow'});
+      const nome = el('input', {class:'inp text-left', value: x.nome || '', placeholder: x.eu ? 'Você' : 'nome do sócio'});
+      nome.addEventListener('input', () => { x.nome = nome.value; persist(); });
+      row.appendChild(el('div', {}, [el('span', {class:'reg-mlbl'}, ['Sócio']), nome]));
+      row.appendChild(el('div', {}, [el('span', {class:'reg-mlbl'}, ['% no lucro']), numberInput({value:x.pct, kind:'pct', onInput:(n)=>{ x.pct = n; persist(); refresh(); }})]));
+      row.appendChild(el('div', {}, [el('span', {class:'reg-mlbl'}, ['Pró-labore (R$/mês)']), numberInput({value:x.pl, kind:'brl', onInput:(n)=>{ x.pl = n; persist(); refresh(); }})]));
+      if (x.eu){
+        row.appendChild(el('div', {}, [el('span', {class:'reg-mlbl'}, ['Precisa levar por mês']),
+          el('div', {class:'reg-meta-eu'}, [el('b', {class:'mono', id:'reg-meta-eu'}, ['']), el('div', {class:'help', style:'margin:0;'}, ['sua meta (Sonhos + Vida + Meta)'])])]));
+        row.appendChild(el('span'));
+      } else {
+        row.appendChild(el('div', {}, [el('span', {class:'reg-mlbl'}, ['Precisa levar por mês']), numberInput({value:x.meta||0, kind:'brl', onInput:(n)=>{ x.meta = n; persist(); refresh(); }})]));
+        row.appendChild(el('button', {class:'row-del', title:'remover sócio', onclick:()=>{ g.socios.splice(i, 1); persist(); rerender(); }}, ['✕']));
+      }
+      tab.appendChild(row);
+    });
+    box.appendChild(tab);
+    box.appendChild(el('div', {class:'help', id:'reg-soma-pct'}, ['']));
+    const addS = el('button', {class:'btn btn-secondary btn-sm', type:'button'}, ['+ Adicionar sócio']);
+    addS.addEventListener('click', () => {
+      const n = g.socios.length + 1;
+      g.socios.forEach(x => { x.pct = 1 / n; });
+      g.socios.push({nome:'', pct:1 / n, pl:TAX2026.salMin, meta:0});
+      persist(); rerender();
+    });
+    box.appendChild(addS);
+    box.appendChild(el('p', {class:'help'}, ['"Precisa levar por mês" do outro sócio: pergunte a ele quanto precisa tirar da empresa pra pagar a vida e os sonhos dele. Se ele também usa o Precifica, é a "Meta de lucro" dele.']));
+    box.appendChild(el('div', {class:'resumo-hero ok reg-meta-box', id:'reg-meta-soc', style:'display:none;'}));
+    body.appendChild(box);
+  }
+
+  // ---------- comparação ----------
+  const cmp = el('div', {class:'cat-group'});
+  cmp.appendChild(el('div', {class:'cat-title'}, ['Quanto vai de imposto: CPF x PJ']));
+  cmp.appendChild(el('p', {class:'help'}, ['O app já puxa os números das outras etapas. Se ainda não preencheu, coloque um valor aproximado aqui ou volte depois.']));
+  const autoRow = (label, help, key, autoKey) => {
+    const r = el('div', {class:'field-row'});
+    const lab = el('label', {}, [label, el('div', {class:'help'}, [help]), el('div', {class:'help', id:'reg-auto-' + key}, [''])]);
+    r.appendChild(lab);
+    r.appendChild(numberInput({value: g[key] != null ? g[key] : 0, kind:'brl', onInput:(n)=>{ g[key] = n; persist(); refresh(); }}));
+    cmp.appendChild(r);
+    return r;
+  };
+  const rowFat = autoRow('Faturamento por mês', 'Tudo que entra, antes de qualquer desconto.', 'fat');
+  const rowDesp = autoRow('Despesas do negócio por mês', 'Aluguel, equipe, material, laboratório… (sem o seu pró-labore).', 'despesas');
+  const rowFolha = autoRow('Folha de funcionários CLT por mês', 'Salários + encargos. Entra no Fator R do Simples.', 'folha');
+  // preenche os campos automáticos com o valor calculado
+  const R0 = calcRegime(model, st);
+  [['fat', rowFat], ['despesas', rowDesp], ['folha', rowFolha]].forEach(([k, row]) => {
+    if (g[k] == null){ row.querySelector('input').value = fmtNum(R0.auto[k], 2); }
+  });
+  const anexoRow = el('div', {class:'field-row'});
+  anexoRow.appendChild(el('label', {}, ['Atividade no Simples Nacional', el('div', {class:'help'}, ['Dentista, médico e outros serviços de saúde: Fator R.'])]));
+  const sel = el('select', {class:'inp text-left'});
+  ANEXOS.forEach(a => { const o = el('option', {value:a.key}, [a.label]); if (a.key === g.anexo) o.selected = true; sel.appendChild(o); });
+  sel.addEventListener('change', () => { g.anexo = sel.value; persist(); refresh(); });
+  anexoRow.appendChild(sel);
+  cmp.appendChild(anexoRow);
+  const pr = (label, help, key) => {
+    const r = el('div', {class:'field-row'});
+    r.appendChild(el('label', {}, [label, el('div', {class:'help'}, [help])]));
+    r.appendChild(numberInput({value:g[key]||0, kind:'brl', onInput:(n)=>{ g[key] = n; persist(); refresh(); }}));
+    cmp.appendChild(r);
+  };
+  pr('ISS de autônomo (CPF) por mês', 'Taxa fixa da prefeitura pra autônomos (valor anual ÷ 12). Varia de cidade pra cidade; na dúvida, deixe 0.', 'issCPF');
+  pr('Custo a mais de contador no PJ por mês', 'Se o contador do CNPJ ainda não está em "Meu Negócio". Senão, deixe 0.', 'contabPJ');
+  cmp.appendChild(el('div', {id:'reg-res'}));
+  body.appendChild(cmp);
+  body.appendChild(el('ul', {class:'note-list', style:'margin-top:16px;'}, [
+    el('li', {}, ['Valores de 2026: tabela do IR com a redução até R$ 7.350 (Lei 15.270/2025), INSS de autônomo de 20% e do sócio de 11% (teto de R$ 8.475,55), e as tabelas do Simples Nacional.']),
+    el('li', {}, ['No CPF, as despesas do consultório entram como livro-caixa. No PJ, o INSS da empresa já vem dentro do DAS (Anexos III e V).']),
+    el('li', {}, ['Lucro distribuído acima de R$ 50 mil por mês pra um mesmo sócio tem retenção de 10% de IR desde 2026. Para empresas do Simples isso ainda está sendo discutido na Justiça.']),
+    el('li', {}, ['É uma estimativa pra ajudar na decisão — confirme sempre com o seu contador antes de abrir ou mudar de regime.']),
+  ]));
+  panel.appendChild(body);
+  footNav(panel, {});
+
+  function linha(lbl, a, b, cls){
+    return '<div class="reg-cl' + (cls ? ' ' + cls : '') + '"><span>' + lbl + '</span><b class="mono">' + a + '</b>' + (b != null ? '<b class="mono">' + b + '</b>' : '') + '</div>';
+  }
+  function refresh(){
+    const R = calcRegime(model, st);
+    const autoTxt = (k, v) => {
+      const e = $('reg-auto-' + k); if (!e) return;
+      e.innerHTML = '';
+      if (g[k] == null) e.textContent = '↻ puxado das outras etapas';
+      else e.appendChild(el('button', {type:'button', class:'auth-link', style:'padding:0;', onclick:()=>{ g[k] = null; persist(); rerender(); }}, ['↻ usar o valor das outras etapas (' + fmtBRL(v) + ')']));
+    };
+    autoTxt('fat', R.auto.fat); autoTxt('despesas', R.auto.despesas); autoTxt('folha', R.auto.folha);
+    // sócios
+    const sp = $('reg-soma-pct');
+    if (sp) sp.textContent = Math.abs(R.somaPct - 1) > 0.001 ? '⚠️ As % dos sócios somam ' + fmtNum(R.somaPct * 100, 1) + '%. Precisam somar 100%.' : '✓ As % somam 100%.';
+    const r = computeResumo(model, st);
+    const me = $('reg-meta-eu'); if (me) me.textContent = fmtBRL(r.metaSeu);
+    const ms = $('reg-meta-soc');
+    if (ms){
+      if (R.sociedade){
+        ms.style.display = '';
+        ms.innerHTML = '<div class="lbl">Pra todos os sócios baterem a meta, a empresa precisa dar de lucro</div><div class="val">' + fmtBRL(r.meta) + '<span style="font-size:14px;font-weight:600;"> por mês</span></div>'
+          + '<div class="lbl">Essa passa a ser a meta da empresa no Resumo. É mais que a soma das metas quando a divisão de % não acompanha o que cada um precisa.</div>';
+      } else ms.style.display = 'none';
+    }
+    // comparação
+    const box = $('reg-res'); if (!box) return;
+    if (R.fat <= 0){ box.innerHTML = '<div class="callout">Coloque o faturamento por mês pra ver a comparação.</div>'; return; }
+    const pj = R.pj, cpf = R.cpf;
+    const anexoTxt = 'Anexo ' + pj.anexo + (g.anexo === 'fatorR' ? ' (Fator R de ' + fmtNum(pj.fatorR * 100, 1) + '%)' : '');
+    let h = '';
+    if (!R.sociedade){
+      h += '<div class="reg-cmp">';
+      h += '<div class="reg-cl reg-ch"><span></span><b>CPF</b><b>PJ</b></div>';
+      h += linha('INSS', fmtBRL(cpf.inss), fmtBRL(pj.socios.reduce((s, x) => s + x.inss, 0)));
+      h += linha('Imposto de renda', fmtBRL(cpf.ir), fmtBRL(pj.socios.reduce((s, x) => s + x.ir, 0)));
+      h += linha('ISS', fmtBRL(cpf.iss), 'no DAS');
+      h += linha('Simples (DAS) — ' + anexoTxt, '—', fmtBRL(pj.das));
+      if (pj.socios.some(x => x.ret > 0)) h += linha('Retenção sobre lucro (> R$ 50 mil)', '—', fmtBRL(pj.socios.reduce((s, x) => s + x.ret, 0)));
+      if (pj.contab > 0) h += linha('Contador a mais', '—', fmtBRL(pj.contab));
+      h += linha('Total de impostos', fmtBRL(cpf.total), fmtBRL(pj.total + pj.contab), 'reg-tot');
+      h += linha('% do faturamento', fmtNum(cpf.pct * 100, 1) + '%', fmtNum(safeDiv(pj.total + pj.contab, R.fat) * 100, 1) + '%');
+      h += linha('Sobra pra você no mês', fmtBRL(cpf.sobra), fmtBRL(pj.sobra), 'reg-tot');
+      h += '</div>';
+      const dif = pj.sobra - cpf.sobra;
+      const melhor = dif > 0 ? 'pj' : 'cpf';
+      h += '<div class="resumo-hero ' + (melhor === 'pj' ? 'ok' : 'ok') + ' reg-verd"><div class="lbl">' + (Math.abs(dif) < 50 ? 'Dá praticamente na mesma' : (melhor === 'pj' ? '🏢 Como PJ sobra mais' : '👤 Como CPF sobra mais')) + '</div>'
+        + (Math.abs(dif) < 50 ? '' : '<div class="val">+' + fmtBRL(Math.abs(dif)) + '<span style="font-size:14px;font-weight:600;"> por mês</span></div><div class="lbl">' + fmtBRL(Math.abs(dif) * 12) + ' por ano.</div>') + '</div>';
+    } else {
+      h += '<div class="reg-cmp reg-cmp-soc">';
+      h += '<div class="reg-cl reg-ch"><span>Sócio</span><b>Pró-labore</b><b>INSS + IR</b><b>Lucro</b><b>Leva no mês</b></div>';
+      pj.socios.forEach(x => {
+        h += '<div class="reg-cl"><span>' + escapeHtml(x.nome) + ' (' + fmtNum(x.pct * 100, 0) + '%)</span><b class="mono">' + fmtBRL(x.pl) + '</b><b class="mono">' + fmtBRL(x.inss + x.ir) + '</b><b class="mono">' + fmtBRL(x.div - x.ret) + '</b><b class="mono">' + fmtBRL(x.leva) + '</b></div>';
+      });
+      h += '</div>';
+      h += '<div class="reg-cmp">' + linha('Simples (DAS) — ' + anexoTxt, fmtBRL(pj.das)) + linha('Total de impostos (empresa + sócios)', fmtBRL(pj.total), null, 'reg-tot') + linha('% do faturamento', fmtNum(pj.pct * 100, 1) + '%') + '</div>';
+      h += '<p class="help">Em sociedade a comparação com CPF não se aplica: cada sócio atendendo no próprio CPF seria outro negócio.</p>';
+    }
+    if (pj.pool < 0) h += '<div class="svc-diff falta">Com esse faturamento, depois das despesas, do imposto e dos pró-labores, <b>falta ' + fmtBRL(-pj.pool) + '</b> — não sobra lucro pra dividir. Reveja os pró-labores ou o faturamento.</div>';
+    if (pj.acimaLimite) h += '<div class="svc-diff falta">Esse faturamento passa de R$ 4,8 milhões por ano — acima do limite do Simples Nacional.</div>';
+    if (g.anexo === 'fatorR' && pj.anexo === 'V'){
+      h += '<div class="svc-diff falta"><b>Você está no Anexo V</b> (imposto começa em 15,5%). Com pró-labore + folha de pelo menos 28% do faturamento você vai pro Anexo III (começa em 6%). '
+        + 'Pró-labore total mínimo: <b>' + fmtBRL(Math.max(pj.plMinFatorR, TAX2026.salMin)) + '</b> por mês. <button type="button" class="btn btn-secondary btn-sm" id="reg-fatorr">Ajustar pró-labore</button></div>';
+    }
+    const usar = g.tipo === 'cpf' ? cpf.pct : (g.tipo === 'pj' ? safeDiv(pj.total + pj.contab, R.fat) : null);
+    if (usar != null){
+      h += '<div class="reg-usar"><span>Imposto do ' + (g.tipo === 'cpf' ? 'CPF' : 'PJ') + ': <b>' + fmtNum(usar * 100, 1) + '%</b> do faturamento.</span> <button type="button" class="btn btn-primary btn-sm" id="reg-usar">Usar ' + fmtNum(usar * 100, 1) + '% nos meus preços</button><span class="help" id="reg-usar-ok" style="margin:0;"></span></div>';
+    }
+    box.innerHTML = h;
+    const bf = $('reg-fatorr');
+    if (bf) bf.addEventListener('click', () => {
+      const alvo = Math.max(pj.plMinFatorR, TAX2026.salMin * g.socios.length);
+      g.socios.forEach(x => { x.pl = Math.max(TAX2026.salMin, Math.ceil(alvo * (parseBR(x.pct) || 1 / g.socios.length) / 10) * 10); });
+      persist(); rerender();
+    });
+    const bu = $('reg-usar');
+    if (bu) bu.addEventListener('click', () => {
+      const v = Math.round(usar * 1000) / 1000;
+      if (model === 'prestador'){ st.calcGlobal = st.calcGlobal || deriveCalcGlobal(st.calcular); st.calcGlobal.impostos = v; (st.calcular||[]).forEach(r => { if (r.usaPadrao === false) r.impostos = v; }); }
+      else (st.calcular || []).forEach(r => { r.impostos = v; });
+      persist();
+      const ok = $('reg-usar-ok'); if (ok) ok.textContent = '✓ Pronto! Os preços em "' + stepTitle('calcular') + '" já usam esse imposto.';
+    });
+  }
+  requestAnimationFrame(refresh);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -3673,6 +4022,36 @@ function imprimirResumo(model, r){
   setTimeout(() => window.print(), 50);
 }
 
+// Quadro do Resumo: CPF/PJ escolhido e, em sociedade, quanto cada sócio leva.
+function resumoRegime(model, st, r){
+  const g = st.regime || {};
+  const box = el('div', {class:'callout reg-resumo'});
+  if (!g.tipo){
+    box.appendChild(el('span', {}, ['Você ainda não disse se atende como CPF ou PJ. ']));
+    box.appendChild(el('button', {class:'btn btn-secondary btn-sm', type:'button', onclick:()=>goStep('regime')}, ['Escolher e comparar impostos']));
+    return box;
+  }
+  const R = calcRegime(model, st);
+  const pct = g.tipo === 'cpf' ? R.cpf.pct : safeDiv(R.pj.total + R.pj.contab, R.fat);
+  box.appendChild(el('div', {}, [el('b', {}, [g.tipo === 'cpf' ? '👤 Pessoa física (CPF)' : (ehSociedade(st) ? '🏢 PJ em sociedade (' + g.socios.length + ' sócios)' : '🏢 Empresa (PJ)')]),
+    R.fat > 0 ? ' · imposto estimado de ' + fmtNum(pct * 100, 1) + '% do faturamento' + (g.tipo === 'pj' ? ' (Anexo ' + R.pj.anexo + ')' : '') : '']));
+  if (ehSociedade(st)){
+    const lista = el('div', {class:'reg-cmp reg-cmp-soc'});
+    lista.appendChild(el('div', {class:'reg-cl reg-ch'}, [el('span', {}, ['Sócio']), el('b', {}, ['Pró-labore']), el('b', {}, ['Lucro']), el('b', {}, ['Leva no mês']), el('b', {}, ['Meta'])]));
+    const somaPl = g.socios.reduce((s, x) => s + parseBR(x.pl), 0);
+    g.socios.forEach(x => {
+      const pl = parseBR(x.pl), lucro = parseBR(x.pct) * (r.liquido - somaPl), leva = pl + lucro;
+      const meta = x.eu ? r.metaSeu : parseBR(x.meta);
+      lista.appendChild(el('div', {class:'reg-cl'}, [el('span', {}, [(x.nome || (x.eu ? 'Você' : 'Sócio')) + ' (' + fmtNum(parseBR(x.pct) * 100, 0) + '%)']),
+        el('b', {class:'mono'}, [fmtBRL(pl)]), el('b', {class:'mono'}, [fmtBRL(lucro)]), el('b', {class:'mono'}, [fmtBRL(leva) + (leva >= meta ? ' ✅' : ' ❌')]), el('b', {class:'mono'}, [fmtBRL(meta)])]));
+    });
+    box.appendChild(lista);
+    box.appendChild(el('div', {class:'help', style:'margin:0;'}, ['Valores antes do INSS e do IR de cada sócio. A meta da empresa (' + fmtBRL(r.meta) + ') é o lucro que faz todos baterem a meta.']));
+  }
+  box.appendChild(el('button', {class:'btn btn-secondary btn-sm', type:'button', style:'margin-top:8px;', onclick:()=>goStep('regime')}, ['Ver CPF x PJ']));
+  return box;
+}
+
 function renderStepResumo(panel){
   const model = APP.model;
   const r = computeResumo(model, APP.state);
@@ -3680,6 +4059,7 @@ function renderStepResumo(panel){
     'Olhe aqui antes de aceitar um novo cliente, mudar de preço ou decidir qualquer coisa importante.');
   const body = el('div', {class:'panel-body'});
   body.appendChild(resumoHero(model, r));
+  body.appendChild(resumoRegime(model, APP.state, r));
   const grid = el('div', {class:'stat-grid'});
 
   if (model === 'prestador'){

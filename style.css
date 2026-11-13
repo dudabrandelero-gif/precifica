@@ -562,3 +562,35 @@
 .svc-q .svc-seg{ display:flex; width:100%; }
 .svc-q .svc-seg button{ flex:1 1 auto; padding:5px 6px; white-space:nowrap; }
 @media (max-width:560px){ .svc-sub{ margin-left:0; } }
+
+/* ---- Etapa CPF ou PJ ---- */
+.reg-ops{ display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:16px; }
+.reg-op{ text-align:left; background:var(--surface); border:2px solid var(--border-strong); border-radius:12px; padding:14px 16px; cursor:pointer; font-family:var(--font-body); }
+.reg-op.on{ border-color:var(--green-strong); background:var(--green-fill); }
+.reg-op-t{ font-weight:800; font-size:16px; margin-bottom:4px; color:var(--ink); }
+.reg-socios{ display:flex; flex-direction:column; gap:8px; margin:8px 0; }
+.reg-srow{ display:grid; grid-template-columns:1.4fr .8fr 1fr 1.2fr 32px; gap:8px; align-items:center; }
+.reg-shead span{ font-size:12px; font-weight:700; color:var(--ink-soft); }
+.reg-mlbl{ display:none; }
+.reg-meta-eu{ padding:4px 2px; }
+.reg-meta-box{ margin-top:12px; }
+.reg-cmp{ border:1px solid var(--border-strong); border-radius:10px; padding:8px 12px; margin:12px 0; }
+.reg-cl{ display:grid; grid-template-columns:1fr 120px 120px; gap:8px; padding:5px 0; border-bottom:1px dashed var(--border-strong); font-size:14px; align-items:center; }
+.reg-cl:last-child{ border-bottom:none; }
+.reg-cl b{ text-align:right; }
+.reg-ch b{ font-size:13px; }
+.reg-tot{ font-weight:800; }
+.reg-cmp-soc .reg-cl{ grid-template-columns:1.3fr repeat(4, 1fr); }
+.reg-verd{ margin:12px 0; }
+.reg-usar{ display:flex; flex-wrap:wrap; gap:8px 12px; align-items:center; margin-top:12px; padding:10px 12px; background:var(--amber-fill-soft); border-radius:10px; }
+@media (max-width:640px){
+  .reg-ops{ grid-template-columns:1fr; }
+  .reg-shead{ display:none !important; }
+  .reg-srow{ grid-template-columns:1fr 1fr; border:1px solid var(--border-strong); border-radius:10px; padding:8px; }
+  .reg-srow > div:first-child{ grid-column:1 / -1; }
+  .reg-mlbl{ display:block; font-size:12px; font-weight:700; color:var(--ink-soft); margin-bottom:2px; }
+  .reg-cl{ grid-template-columns:1fr 90px 90px; font-size:13px; }
+  .reg-cmp-soc .reg-cl{ grid-template-columns:1fr 1fr; }
+  .reg-cmp-soc .reg-ch{ display:none; }
+}
+.reg-verd .val, .reg-meta-box .val{ font-size:clamp(26px, 7vw, 44px); overflow-wrap:anywhere; }
