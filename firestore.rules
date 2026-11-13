@@ -12,6 +12,8 @@ rules_version = '2';
 // - Cada pessoa só lê e escreve os PRÓPRIOS dados.
 // - As administradoras (lista abaixo, com e-mail confirmado) leem os dados
 //   de todo mundo e gerenciam a lista de convidados ("credenciados").
+// - Empresas em sociedade: os sócios cadastrados (com e-mail confirmado)
+//   leem e editam juntos o mesmo projeto.
 //
 // A lista de administradoras precisa ser IGUAL à do app.js (ADMIN_EMAILS).
 // ============================================================================
@@ -47,6 +49,28 @@ service cloud.firestore {
         allow read: if isOwner(uid) || isAdmin();
         allow write: if isOwner(uid);
       }
+    }
+
+    // Empresa em sociedade: um projeto compartilhado entre os sócios.
+    // Só entra quem tem o e-mail na lista "membrosEmails" E já confirmou o e-mail.
+    function emailConfirmado() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+    // O Firebase guarda o e-mail do login em minúsculas; o app grava a lista também em minúsculas.
+    function meuEmail() {
+      return request.auth.token.email;
+    }
+    match /empresas/{empresaId} {
+      allow read: if (emailConfirmado() && meuEmail() in resource.data.membrosEmails) || isAdmin();
+      allow create: if emailConfirmado()
+        && request.resource.data.criadoPor == request.auth.uid
+        && meuEmail() in request.resource.data.membrosEmails;
+      // Um sócio não consegue se tirar sozinho da lista sem querer.
+      allow update: if emailConfirmado()
+        && meuEmail() in resource.data.membrosEmails
+        && meuEmail() in request.resource.data.membrosEmails
+        && request.resource.data.criadoPor == resource.data.criadoPor;
+      allow delete: if emailConfirmado() && resource.data.criadoPor == request.auth.uid;
     }
 
     // Números resumidos de cada pessoa (o que aparece no painel "Alunos").

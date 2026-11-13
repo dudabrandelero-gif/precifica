@@ -481,7 +481,7 @@
 
 /* ---------- Início focado no dentista + modo rápido ---------- */
   .home-main{display:flex;justify-content:space-between;align-items:center;gap:20px;flex-wrap:wrap;padding:22px 24px;border:2px solid var(--green);border-radius:var(--radius);background:var(--green-fill);margin-top:8px;}
-  .home-main .tag{font-family:var(--font-mono);font-size:11.5px;color:var(--amber-strong);font-weight:700;}
+  .home-main .tag, .home-emp .tag{font-family:var(--font-mono);font-size:11.5px;color:var(--amber-strong);font-weight:700;}
   .home-main-btns{display:flex;flex-direction:column;gap:8px;min-width:240px;}
   .home-outros{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
   @media (max-width:640px){.home-outros{grid-template-columns:1fr;}}
@@ -594,3 +594,21 @@
   .reg-cmp-soc .reg-ch{ display:none; }
 }
 .reg-verd .val, .reg-meta-box .val{ font-size:clamp(26px, 7vw, 44px); overflow-wrap:anywhere; }
+
+/* ---- Empresa em sociedade ---- */
+.home-emp{ margin-top:18px; padding:22px 24px; border:2px solid var(--border-strong); border-radius:12px; background:var(--surface); }
+.emp-lista{ display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:10px; margin-top:14px; }
+.emp-item{ display:flex; flex-direction:column; gap:4px; text-align:left; padding:14px 16px; border:1px solid var(--border-strong); border-radius:10px; background:var(--amber-fill-soft); cursor:pointer; font-family:var(--font-body); color:var(--ink); }
+.emp-item:hover{ border-color:var(--green-strong); }
+.emp-item b{ font-size:16px; }
+.emp-socios, .emp-sonhos{ display:flex; flex-direction:column; gap:8px; margin:8px 0 12px; }
+.emp-srow{ display:grid; grid-template-columns:1.1fr 1.5fr .7fr .9fr 1.1fr 32px; gap:8px; align-items:start; }
+.emp-sorow{ display:grid; grid-template-columns:1.2fr 1.5fr 1fr .8fr .9fr .9fr 32px; gap:8px; align-items:center; }
+.emp-srow .inp, .emp-sorow .inp{ width:100%; box-sizing:border-box; }
+.emp-nota{ margin:0 24px 8px; }
+@media (max-width:760px){
+  .emp-srow, .emp-sorow{ grid-template-columns:1fr 1fr; border:1px solid var(--border-strong); border-radius:10px; padding:8px; }
+  .emp-srow > div:nth-child(-n+2), .emp-sorow > div:nth-child(-n+2){ grid-column:1 / -1; }
+  .home-emp{ padding:16px; }
+  .emp-nota{ margin:0 16px 8px; }
+}

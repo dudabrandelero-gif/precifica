@@ -8,7 +8,7 @@ import {
   signOut, sendPasswordResetEmail, sendEmailVerification,
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 import {
-  getFirestore, doc, getDoc, setDoc, deleteDoc, collection, getDocs, serverTimestamp,
+  getFirestore, doc, getDoc, setDoc, deleteDoc, collection, getDocs, serverTimestamp, query, where,
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import { firebaseConfig } from "./firebase-config.js";
 
@@ -195,13 +195,15 @@ const MODELS = {
 
 const STEP_ORDER = ['regime','sonhos','vida','meta','negocio','insumos','hora','calcular','resumo','crescer'];
 
+const EMPRESA_STEPS = ['empresa','sonhosEmp','negocio','insumos','hora','calcular','impostosEmp','resumoEmp'];
 function stepsFor(modelKey){
+  if (APP.empresaId) return EMPRESA_STEPS;
   const m = MODELS[modelKey];
   return STEP_ORDER.filter(s => s !== 'insumos' || m.hasInsumos);
 }
 
 const STEP_LABEL = {
-  regime:'CPF ou PJ', sonhos:'Meus Sonhos', meta:'Minha Meta', vida:'Minha Vida', negocio:'Meu Negócio',
+  regime:'CPF ou PJ', empresa:'Empresa e sócios', sonhosEmp:'Sonhos da empresa', impostosEmp:'Impostos da empresa', resumoEmp:'Resumo da empresa', sonhos:'Meus Sonhos', meta:'Minha Meta', vida:'Minha Vida', negocio:'Meu Negócio',
   insumos:null, hora:'Minha Hora', calcular:null, resumo:'Resumo', crescer:'Rotina de Crescimento',
 };
 /* ---------------------------------------------------------------------- */
@@ -508,7 +510,7 @@ function mergeWithDefaults(modelKey, parsed){
 // above are pure and reused there.
 function markSaved(){
   const ind = document.getElementById('save-indicator');
-  if (ind){ ind.classList.remove('err'); ind.classList.add('flash'); ind.querySelector('.txt').textContent = 'salvo na sua conta'; }
+  if (ind){ ind.classList.remove('err'); ind.classList.add('flash'); ind.querySelector('.txt').textContent = APP.empresaId ? 'salvo na empresa' : 'salvo na sua conta'; }
 }
 function markSaving(){
   const ind = document.getElementById('save-indicator');
@@ -516,7 +518,7 @@ function markSaving(){
 }
 function markSaveError(){
   const ind = document.getElementById('save-indicator');
-  if (ind){ ind.classList.add('err'); ind.querySelector('.txt').textContent = 'sem internet — salvo só neste aparelho'; }
+  if (ind){ ind.classList.add('err'); ind.querySelector('.txt').textContent = APP.empresaId ? 'não consegui salvar — confira a internet' : 'sem internet — salvo só neste aparelho'; }
 }
 
 /* ---------------------------------------------------------------------- */
@@ -825,11 +827,12 @@ function defaultRegime(modelKey){
   return {tipo:null, anexo:anexoPadrao(modelKey), fat:null, despesas:null, folha:null, issCPF:0, contabPJ:0,
     socios:[{eu:true, nome:'Você', pct:1, pl:TAX2026.salMin}]};
 }
-function normalizeRegime(r, modelKey){
+function normalizeRegime(r, modelKey, empresa){
   const d = defaultRegime(modelKey);
   r = Object.assign(d, r || {});
   if (!Array.isArray(r.socios) || !r.socios.length) r.socios = d.socios;
-  if (!r.socios.some(x => x.eu)) r.socios[0].eu = true;
+  if (empresa){ r.tipo = 'pj'; r.socios.forEach(x => { delete x.eu; }); }
+  else if (!r.socios.some(x => x.eu)) r.socios[0].eu = true;
   return r;
 }
 // IR mensal (pessoa física). "bruto" decide a redução de 2026; deduções legais
@@ -863,7 +866,7 @@ function regimeAutos(modelKey, state){
   return {fat: base.receita || 0, despesas, folha: FOLHA_LABELS.reduce((s, l) => s + v(l), 0)};
 }
 function calcRegime(modelKey, state){
-  const g = normalizeRegime(state.regime, modelKey);
+  const g = normalizeRegime(state.regime, modelKey, state._empresa);
   const auto = regimeAutos(modelKey, state);
   const fat = g.fat != null ? parseBR(g.fat) : auto.fat;
   const despesas = g.despesas != null ? parseBR(g.despesas) : auto.despesas;
@@ -882,7 +885,8 @@ function calcRegime(modelKey, state){
   const al = simplesAliquota(anexo, fat * 12);
   const das = fat * al.efetiva;
   const contab = parseBR(g.contabPJ);
-  const pool = fat - despesas - das - contab - somaPl;
+  const reservaSonhos = state._empresa ? sumSonhosEmp(state) : 0;
+  const pool = fat - despesas - das - contab - somaPl - reservaSonhos;
   const ss = socios.map(x => {
     const pl = parseBR(x.pl), pct = parseBR(x.pct);
     const inss = .11 * Math.min(pl, TAX2026.teto);
@@ -896,9 +900,10 @@ function calcRegime(modelKey, state){
     socios: ss, total: totPJ, pct: safeDiv(totPJ, fat), sobra: ss.reduce((s, x) => s + x.leva, 0),
     plMinFatorR: Math.max(0, .28 * fat - folha)};
   const somaPct = socios.reduce((s, x) => s + parseBR(x.pct), 0);
-  return {g, fat, despesas, folha, auto, cpf, pj, somaPct, sociedade: socios.length > 1};
+  return {g, fat, despesas, folha, auto, cpf, pj, somaPct, reservaSonhos, sociedade: socios.length > 1};
 }
 function ehSociedade(state){
+  if (state && state._empresa) return false;
   const g = state && state.regime;
   return !!(g && g.tipo === 'pj' && Array.isArray(g.socios) && g.socios.length > 1);
 }
@@ -929,6 +934,12 @@ function computeResumo(modelKey, state){
   const r = computeResumoBase(modelKey, state);
   r.metaSeu = r.meta;
   r.liquidoSeu = r.liquido;
+  if (state._empresa){
+    r.meta = metaEmpresa(state);
+    r.bateMeta = r.liquido >= r.meta;
+    r.diff = Math.abs(r.liquido - r.meta);
+    return r;
+  }
   if (ehSociedade(state)){
     r.meta = metaSociedade(state, r.metaSeu);
     r.bateMeta = r.liquido >= r.meta;
@@ -1091,7 +1102,7 @@ function saveResumo(modelKey, state){
   lsSet('resumos', all);
   return resumo;
 }
-function persist(){ scheduleSave(APP.model, APP.state); }
+function persist(){ if (APP.empresaId) return scheduleSaveEmpresa(); scheduleSave(APP.model, APP.state); }
 
 // Ao entrar: traz tudo da nuvem pra cópia local. Se a nuvem estiver vazia mas este
 // aparelho tiver dados da época sem login, sobe esses dados pra conta.
@@ -1139,7 +1150,7 @@ function initApp(){
   onAuthStateChanged(auth, async (u) => {
     if (!u){ CURRENT_USER = null; STORE_PREFIX = LEGACY_PREFIX; APP.view = 'login'; APP.model = null; APP.state = null; render(); return; }
     const email = (u.email || '').toLowerCase();
-    CURRENT_USER = { uid: u.uid, email, nome: '', admin: isAdminEmail(email) };
+    CURRENT_USER = { uid: u.uid, email, nome: '', admin: isAdminEmail(email), verificado: !!u.emailVerified };
     STORE_PREFIX = 'precifica:u:' + u.uid + ':';
     // Só quem administra precisa confirmar o e-mail (protege o acesso aos dados de todos).
     if (CURRENT_USER.admin && !u.emailVerified){ APP.view = 'verificar'; render(); return; }
@@ -1174,6 +1185,7 @@ async function criarContaEConvidar(email){
 /* ---------- Navegação dentro do app ---------- */
 
 function selectModel(modelKey){
+  APP.empresaId = null; APP.empresaDoc = null;
   APP.model = modelKey;
   APP.state = null;
   APP.step = 'sonhos';
@@ -1188,6 +1200,7 @@ function selectModel(modelKey){
 }
 function goHome(){
   APP.view = 'menu';
+  APP.empresaId = null; APP.empresaDoc = null; APP.empresas = null;
   APP.model = null;
   APP.state = null;
   render();
@@ -1221,6 +1234,7 @@ function render(){
   if (APP.view === 'credenciamento' && CURRENT_USER && CURRENT_USER.admin){ root.appendChild(renderTopbar()); root.appendChild(renderCredenciamento()); return; }
   if (APP.view === 'alunos' && CURRENT_USER && CURRENT_USER.admin){ root.appendChild(renderTopbar()); root.appendChild(renderAlunos()); return; }
   if (APP.view === 'menu'){ root.appendChild(renderTopbar()); root.appendChild(renderMenu()); return; }
+  if (APP.view === 'novaEmpresa'){ root.appendChild(renderTopbar()); root.appendChild(renderNovaEmpresa()); window.scrollTo(0,0); return; }
   if (APP.view === 'rapido'){ root.appendChild(renderTopbar()); root.appendChild(renderRapido()); window.scrollTo(0,0); return; }
   if (APP.view === 'geral'){ root.appendChild(renderTopbar()); root.appendChild(renderVisaoGeral()); window.scrollTo(0,0); return; }
   if (APP.view === 'wizard'){
@@ -1503,14 +1517,15 @@ function renderTopbar(){
   bar.appendChild(el('div', {class:'brand'}, ['Precifica', el('span',{class:'sub'},['método 4C'])]));
   if (APP.view === 'wizard'){
     const m = MODELS[APP.model];
-    bar.appendChild(el('div', {class:'model-pill'}, ['Modelo: ', el('b',{},[m.label])]));
+    if (APP.empresaId) bar.appendChild(el('div', {class:'model-pill'}, ['🏢 Empresa: ', el('b',{},[(APP.state && APP.state.empresaNome) || 'sem nome'])]));
+    else bar.appendChild(el('div', {class:'model-pill'}, ['Modelo: ', el('b',{},[m.label])]));
   }
   bar.appendChild(el('div', {class:'topbar-spacer'}));
   if (APP.view === 'wizard'){
-    const ind = el('span', {class:'save-indicator', id:'save-indicator'}, [el('span',{class:'dot'}), el('span',{class:'txt'},['salvo na sua conta'])]);
+    const ind = el('span', {class:'save-indicator', id:'save-indicator'}, [el('span',{class:'dot'}), el('span',{class:'txt'},[APP.empresaId ? 'salvo na empresa' : 'salvo na sua conta'])]);
     bar.appendChild(ind);
     bar.appendChild(el('button', {class:'btn-ghost', onclick: goHome}, ['☰ Menu principal']));
-    bar.appendChild(el('button', {class:'btn-ghost', onclick: resetModelData}, ['Limpar dados']));
+    if (!APP.empresaId) bar.appendChild(el('button', {class:'btn-ghost', onclick: resetModelData}, ['Limpar dados']));
   } else if (APP.view !== 'menu'){
     bar.appendChild(el('button', {class:'btn-ghost', onclick: goHome}, ['☰ Início']));
   }
@@ -1568,6 +1583,7 @@ function renderMenu(){
     el('button', {class:'btn btn-secondary', type:'button', onclick:()=>selectModel('prestador')}, [r ? 'Continuar o passo a passo' : 'Passo a passo completo']),
   ]));
   wrap.appendChild(main);
+  wrap.appendChild(renderMenuEmpresas());
 
   const preenchidas = Object.keys(MODELS).filter(k => lsGet('modelo:' + k));
   if (preenchidas.length) wrap.appendChild(el('button', {class:'home-geral', type:'button', onclick:()=>{ APP.view='geral'; render(); }}, [
@@ -1806,6 +1822,7 @@ function renderRapido(){
 function escapeHtml(t){ return String(t == null ? '' : t).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function stepTitle(stepKey){
   const m = MODELS[APP.model];
+  if (APP.empresaId && stepKey === 'negocio') return 'Custos fixos';
   if (stepKey === 'insumos') return m.insumosLabel;
   if (stepKey === 'calcular') return m.calcTitle;
   return STEP_LABEL[stepKey];
@@ -1835,11 +1852,15 @@ function renderStepper(){
 function renderStepContent(){
   const panel = el('div', {class:'panel'});
   const fn = {
-    regime: renderStepRegime, sonhos: renderStepSonhos, meta: renderStepMeta, vida: renderStepVida, negocio: renderStepNegocio,
+    regime: renderStepRegime, empresa: renderStepEmpresa, sonhosEmp: renderStepSonhosEmp, impostosEmp: renderStepRegime, resumoEmp: renderStepResumoEmp,
+    sonhos: renderStepSonhos, meta: renderStepMeta, vida: renderStepVida, negocio: renderStepNegocio,
     insumos: renderStepInsumos, hora: renderStepHora, calcular: renderStepCalcular,
     resumo: renderStepResumo, crescer: renderStepCrescer,
   }[APP.step];
   fn(panel);
+  // Na empresa, algumas etapas ganham um lembrete de que os números são da empresa toda.
+  const nota = APP.empresaId && EMPRESA_NOTAS[APP.step];
+  if (nota){ const h = panel.querySelector('.panel-head'); if (h) h.after(el('div', {class:'callout emp-nota'}, [nota])); }
   return panel;
 }
 
@@ -2064,11 +2085,11 @@ function updateFilhos(){
 function renderStepNegocio(panel){
   const m = MODELS[APP.model];
   renderCategoryStep(panel, {
-    eyebrow:'3º passo — Conhecer', title:m.negocioTitle,
-    desc: m.negocioDesc,
+    eyebrow: APP.empresaId ? 'Empresa' : '3º passo — Conhecer', title: APP.empresaId ? 'Custos fixos da empresa' : m.negocioTitle,
+    desc: APP.empresaId ? 'Tudo que a empresa gasta por mês mesmo sem atender ninguém. Não coloque aqui o pró-labore dos sócios — ele entra na etapa Empresa e sócios.' : m.negocioDesc,
     cats: NEGOCIO_CATS[APP.model], stateKey:'negocio', totalLabel: m.negocioTotalLabel,
   });
-  if (APP.model !== 'prestador') return;
+  if (APP.model !== 'prestador' || APP.empresaId) return;
   // Dentista que atende na clínica de outra pessoa não paga a estrutura: avisa logo aqui.
   const st = APP.state;
   const g = st.calcGlobal || (st.calcGlobal = deriveCalcGlobal(st.calcular));
@@ -2091,14 +2112,19 @@ function renderStepNegocio(panel){
 
 function renderStepRegime(panel){
   const st = APP.state, model = APP.model;
-  st.regime = normalizeRegime(st.regime, model);
+  st.regime = normalizeRegime(st.regime, model, !!APP.empresaId);
   const g = st.regime;
+  const emp = !!APP.empresaId;
+  if (emp) g.tipo = 'pj';
   const $ = (id) => document.getElementById(id);
   function rerender(){ const y = window.scrollY; render(); requestAnimationFrame(() => window.scrollTo(0, y)); }
 
-  panelHead(panel, 'Antes de começar', 'CPF ou PJ?',
+  if (emp) panelHead(panel, 'Empresa', 'Impostos da empresa',
+    'Quanto a empresa paga no Simples Nacional, o INSS e o IR do pró-labore de cada sócio, e o Fator R.');
+  else panelHead(panel, 'Antes de começar', 'CPF ou PJ?',
     'Como você recebe pelo seu trabalho? Isso muda quanto vai de imposto e, se você tem sócios, como o lucro é dividido entre vocês.');
   const body = el('div', {class:'panel-body'});
+  if (!emp){
 
   // ---------- escolha ----------
   const ops = el('div', {class:'reg-ops'});
@@ -2113,9 +2139,11 @@ function renderStepRegime(panel){
   body.appendChild(ops);
   if (!g.tipo) body.appendChild(el('p', {class:'help'}, ['Ainda não sabe? Escolha qualquer um — lá embaixo o app compara os dois com os seus números.']));
   if (model === 'produto' && g.tipo === 'cpf') body.appendChild(el('div', {class:'callout'}, ['Vender produto como pessoa física é bem limitado. Na maioria dos casos é preciso CNPJ (MEI ou empresa). Confira com seu contador.']));
+  if (g.tipo === 'pj') body.appendChild(el('div', {class:'callout'}, ['🤝 Tem sócios e quer que eles preencham junto com você? Volte ao início e use ', el('b', {}, ['"Empresa em sociedade"']), ': cada sócio entra com a própria conta e vocês trabalham no mesmo projeto.']));
+  }
 
   // ---------- sócios ----------
-  if (g.tipo === 'pj'){
+  if (g.tipo === 'pj' && !emp){
     const box = el('div', {class:'cat-group'});
     box.appendChild(el('div', {class:'cat-title'}, ['Sócios da empresa']));
     box.appendChild(el('p', {class:'help'}, ['Cada sócio recebe duas coisas: o ', el('b', {}, ['pró-labore']), ' (o "salário" do sócio, com INSS e IR) e a ', el('b', {}, ['divisão do lucro']), ' (o que sobra, dividido pela % de cada um).']));
@@ -2155,7 +2183,7 @@ function renderStepRegime(panel){
 
   // ---------- comparação ----------
   const cmp = el('div', {class:'cat-group'});
-  cmp.appendChild(el('div', {class:'cat-title'}, ['Quanto vai de imposto: CPF x PJ']));
+  cmp.appendChild(el('div', {class:'cat-title'}, [emp ? 'Números da empresa' : 'Quanto vai de imposto: CPF x PJ']));
   cmp.appendChild(el('p', {class:'help'}, ['O app já puxa os números das outras etapas. Se ainda não preencheu, coloque um valor aproximado aqui ou volte depois.']));
   const autoRow = (label, help, key, autoKey) => {
     const r = el('div', {class:'field-row'});
@@ -2186,7 +2214,7 @@ function renderStepRegime(panel){
     r.appendChild(numberInput({value:g[key]||0, kind:'brl', onInput:(n)=>{ g[key] = n; persist(); refresh(); }}));
     cmp.appendChild(r);
   };
-  pr('ISS de autônomo (CPF) por mês', 'Taxa fixa da prefeitura pra autônomos (valor anual ÷ 12). Varia de cidade pra cidade; na dúvida, deixe 0.', 'issCPF');
+  if (!emp) pr('ISS de autônomo (CPF) por mês', 'Taxa fixa da prefeitura pra autônomos (valor anual ÷ 12). Varia de cidade pra cidade; na dúvida, deixe 0.', 'issCPF');
   pr('Custo a mais de contador no PJ por mês', 'Se o contador do CNPJ ainda não está em "Meu Negócio". Senão, deixe 0.', 'contabPJ');
   cmp.appendChild(el('div', {id:'reg-res'}));
   body.appendChild(cmp);
@@ -2230,7 +2258,7 @@ function renderStepRegime(panel){
     const pj = R.pj, cpf = R.cpf;
     const anexoTxt = 'Anexo ' + pj.anexo + (g.anexo === 'fatorR' ? ' (Fator R de ' + fmtNum(pj.fatorR * 100, 1) + '%)' : '');
     let h = '';
-    if (!R.sociedade){
+    if (!R.sociedade && !emp){
       h += '<div class="reg-cmp">';
       h += '<div class="reg-cl reg-ch"><span></span><b>CPF</b><b>PJ</b></div>';
       h += linha('INSS', fmtBRL(cpf.inss), fmtBRL(pj.socios.reduce((s, x) => s + x.inss, 0)));
@@ -2255,7 +2283,8 @@ function renderStepRegime(panel){
       });
       h += '</div>';
       h += '<div class="reg-cmp">' + linha('Simples (DAS) — ' + anexoTxt, fmtBRL(pj.das)) + linha('Total de impostos (empresa + sócios)', fmtBRL(pj.total), null, 'reg-tot') + linha('% do faturamento', fmtNum(pj.pct * 100, 1) + '%') + '</div>';
-      h += '<p class="help">Em sociedade a comparação com CPF não se aplica: cada sócio atendendo no próprio CPF seria outro negócio.</p>';
+      if (pj.socios.length > 1) h += '<p class="help">Em sociedade a comparação com CPF não se aplica: cada sócio atendendo no próprio CPF seria outro negócio.</p>';
+      if (R.reservaSonhos > 0) h += '<p class="help">O lucro dividido já desconta ' + fmtBRL(R.reservaSonhos) + ' por mês guardados pros sonhos da empresa.</p>';
     }
     if (pj.pool < 0) h += '<div class="svc-diff falta">Com esse faturamento, depois das despesas, do imposto e dos pró-labores, <b>falta ' + fmtBRL(-pj.pool) + '</b> — não sobra lucro pra dividir. Reveja os pró-labores ou o faturamento.</div>';
     if (pj.acimaLimite) h += '<div class="svc-diff falta">Esse faturamento passa de R$ 4,8 milhões por ano — acima do limite do Simples Nacional.</div>';
@@ -3230,6 +3259,7 @@ function buildCalcPrestador(wrap, body){
   gbox.appendChild(el('label', {for:'svc-convenio', class:'rendas-toggle', style:'margin-top:8px;'}, [convChk,
     el('span', {}, [el('b',{},['Atendo convênio']), el('div',{class:'help'},['Marque pra informar, em cada serviço, quanto o convênio retém (repasse).'])])]));
 
+  if (!APP.empresaId){
   // Clínica de terceiros
   const terChk = el('input', {type:'checkbox', id:'svc-terceiros'});
   terChk.checked = !!g.terceiros;
@@ -3250,6 +3280,7 @@ function buildCalcPrestador(wrap, body){
     gbox.appendChild(tb);
   }
 
+  }
   // Formas de pagamento
   const pagChk = el('input', {type:'checkbox', id:'svc-pag'});
   pagChk.checked = !!g.pagAtivo;
@@ -4020,6 +4051,373 @@ function imprimirResumo(model, r){
   const fim = () => { document.body.classList.remove('imprimindo'); sheet.remove(); window.removeEventListener('afterprint', fim); };
   window.addEventListener('afterprint', fim);
   setTimeout(() => window.print(), 50);
+}
+
+/* ---------------------------------------------------------------------- */
+/* Empresa em sociedade — projeto compartilhado entre os sócios            */
+/* ---------------------------------------------------------------------- */
+// Fica em empresas/{id}. Quem está em "membrosEmails" (com e-mail confirmado) lê e edita.
+// Os dados de precificação ficam em "dados", no mesmo formato do modelo Prestador.
+
+const EMPRESA_NOTAS = {
+  hora: 'Na empresa, some a agenda de TODOS os dentistas e cadeiras. Ex.: 2 dentistas, 5 dias, 8 h por dia = 10 dias × 8 h. O custo da hora vira o custo da hora da clínica.',
+  insumos: 'Gasto da empresa com materiais por mês (de todos os dentistas juntos).',
+  calcular: 'Procedimentos da empresa: quantos a clínica toda faz por mês. O preço justo já paga custos fixos, impostos, material e a margem — e a margem é o que sobra pros sócios e pros sonhos da empresa.',
+};
+const SONHO_EMP_TIPOS = ['Equipamento novo', 'Reforma / ampliação', 'Nova cadeira ou unidade', 'Reserva de caixa (emergência)', 'Marketing / expansão', 'Capacitação da equipe', 'Outro'];
+
+function sonhoEmpMensal(x){
+  const v = parseBR(x.valor), n = Math.max(1, parseBR(x.meses) || 1), ta = parseBR(x.taxa);
+  if (v <= 0) return 0;
+  if (ta > 0){ const i = Math.pow(1 + ta, 1/12) - 1; return v * i / (1 - Math.pow(1 + i, -n)); }
+  return v / n;
+}
+function sumSonhosEmp(state){ return (state.sonhosEmp || []).reduce((s, x) => s + sonhoEmpMensal(x), 0); }
+// Meta da empresa = o que faz TODOS os sócios baterem a meta (respeitando a % de cada um)
+// + a reserva mensal pros sonhos da empresa.
+function metaSociosEmpresa(state){
+  const ss = (state.regime && state.regime.socios) || [];
+  const somaPl = ss.reduce((s, x) => s + parseBR(x.pl), 0);
+  let maior = 0;
+  ss.forEach(x => { const pct = parseBR(x.pct); if (pct > 0) maior = Math.max(maior, (parseBR(x.meta) - parseBR(x.pl)) / pct); });
+  return somaPl + maior;
+}
+function metaEmpresa(state){ return metaSociosEmpresa(state) + sumSonhosEmp(state); }
+function emailsSocios(state){
+  const set = new Set(((state.regime && state.regime.socios) || []).map(x => String(x.email || '').trim().toLowerCase()).filter(Boolean));
+  if (CURRENT_USER) set.add(CURRENT_USER.email);
+  return Array.from(set);
+}
+function empresaState(dados){
+  const st = mergeWithDefaults('prestador', dados || {});
+  st._empresa = true;
+  st.regime = normalizeRegime((dados && dados.regime) || st.regime, 'prestador', true);
+  st.sonhosEmp = Array.isArray(st.sonhosEmp) ? st.sonhosEmp : [];
+  return st;
+}
+function linkApp(){ return location.origin + location.pathname; }
+
+async function carregarEmpresas(){
+  if (!CURRENT_USER || !CURRENT_USER.verificado) return;
+  APP.empresasCarregando = true;
+  try{
+    const qs = await getDocs(query(collection(dbfs, 'empresas'), where('membrosEmails', 'array-contains', CURRENT_USER.email)));
+    APP.empresas = qs.docs.map(d => ({id: d.id, data: d.data()}));
+    APP.empresasErro = '';
+  }catch(e){ console.warn('empresas', e); APP.empresas = []; APP.empresasErro = (e && e.code) || 'erro'; }
+  APP.empresasCarregando = false;
+  if (APP.view === 'menu') render();
+}
+
+function renderMenuEmpresas(){
+  const box = el('div', {class:'home-emp'});
+  box.appendChild(el('div', {}, [
+    el('span', {class:'tag'}, ['PJ · Sociedade']),
+    el('h2', {class:'disp', style:'margin:6px 0 6px;'}, ['Empresa em sociedade']),
+    el('p', {style:'margin:0;color:var(--ink-soft);'}, ['Cadastre a clínica em que você é sócio. Cada sócio entra com a própria conta e vocês preenchem juntos: sócios, pró-labore, sonhos da empresa, custos, preços e impostos.']),
+  ]));
+  const u = CURRENT_USER;
+  if (u && !u.verificado){
+    const msg = el('div', {class:'help', style:'margin-top:8px;'}, ['']);
+    box.appendChild(el('div', {class:'callout', style:'margin-top:12px;'}, [
+      el('div', {}, ['Pra proteger os dados da empresa, confirme primeiro o seu e-mail (', el('b', {}, [u.email]), ').']),
+      el('div', {style:'display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;'}, [
+        el('button', {class:'btn btn-primary btn-sm', type:'button', onclick: async () => {
+          try{ await sendEmailVerification(auth.currentUser); msg.textContent = 'Link enviado pra ' + u.email + '. Olhe também o spam. Depois de clicar, volte e aperte "Já confirmei".'; }
+          catch(e){ msg.textContent = authErrorPt(e); }
+        }}, ['Enviar link de confirmação']),
+        el('button', {class:'btn btn-secondary btn-sm', type:'button', onclick: async () => {
+          const cu = auth.currentUser; await cu.reload(); await cu.getIdToken(true);
+          if (cu.emailVerified){ u.verificado = true; render(); carregarEmpresas(); }
+          else msg.textContent = 'Ainda não aparece como confirmado. Clique no link do e-mail e tente de novo.';
+        }}, ['Já confirmei']),
+      ]),
+      msg,
+    ]));
+    return box;
+  }
+  if (APP.empresas == null){ if (!APP.empresasCarregando) carregarEmpresas(); box.appendChild(el('p', {class:'help'}, ['carregando suas empresas…'])); return box; }
+  if (APP.empresasErro) box.appendChild(el('p', {class:'help', style:'color:var(--red);'}, ['Não consegui carregar as empresas (' + APP.empresasErro + ').']));
+  const lista = el('div', {class:'emp-lista'});
+  APP.empresas.forEach(e => {
+    const st = empresaState(e.data.dados);
+    const r = computeResumo('prestador', st);
+    const n = (st.regime.socios || []).length;
+    const entrou = Object.keys(e.data.membros || {}).length;
+    lista.appendChild(el('button', {type:'button', class:'emp-item', onclick:()=>abrirEmpresa(e.id)}, [
+      el('b', {}, ['🏢 ' + (e.data.nome || 'Empresa sem nome')]),
+      el('span', {class:'help', style:'margin:0;'}, [n + (n === 1 ? ' sócio' : ' sócios') + ' · ' + entrou + ' já ' + (entrou === 1 ? 'entrou' : 'entraram')]),
+      el('span', {class:'help', style:'margin:0;'}, ['meta da empresa ', el('b', {}, [fmtBRL(r.meta)]), ' · ', r.bateMeta ? '✅ bate a meta' : '❌ ainda não bate']),
+    ]));
+  });
+  box.appendChild(lista);
+  if (!APP.empresas.length) box.appendChild(el('p', {class:'help', style:'margin-top:8px;'}, ['Se um sócio já cadastrou a empresa com o seu e-mail, ela aparece aqui sozinha.']));
+  box.appendChild(el('button', {class:'btn btn-primary', type:'button', style:'margin-top:12px;', onclick:()=>{ APP.view = 'novaEmpresa'; render(); }}, ['+ Cadastrar empresa']));
+  return box;
+}
+
+function renderNovaEmpresa(){
+  const wrap = el('div', {class:'home'});
+  wrap.appendChild(el('div', {class:'home-hero'}, [el('div', {class:'eyebrow'}, ['Empresa em sociedade']), el('h1', {class:'disp'}, ['Cadastrar empresa']),
+    el('p', {}, ['Coloque o e-mail de cada sócio. Quando ele criar a conta no Precifica com esse e-mail, a empresa aparece na tela inicial dele.'])]));
+  const form = el('div', {class:'panel', style:'padding:20px;max-width:640px;'});
+  const nome = el('input', {class:'inp text-left', placeholder:'Ex.: Clínica Sorriso Ltda'});
+  const cnpj = el('input', {class:'inp text-left', placeholder:'opcional'});
+  const emails = el('textarea', {class:'inp text-left', rows:'3', placeholder:'um e-mail por linha', style:'height:auto;min-height:80px;'});
+  const msg = el('div', {class:'help', style:'color:var(--red);'}, ['']);
+  const f = (lbl, help, inp) => form.appendChild(el('div', {class:'field', style:'margin-bottom:14px;'}, [el('label', {style:'font-weight:700;display:block;margin-bottom:4px;'}, [lbl]), help ? el('div', {class:'help'}, [help]) : null, inp]));
+  f('Nome da empresa', null, nome);
+  f('CNPJ', null, cnpj);
+  f('E-mail dos outros sócios', 'Você (' + CURRENT_USER.email + ') já entra como sócio.', emails);
+  form.appendChild(msg);
+  const btn = el('button', {class:'btn btn-primary', type:'button'}, ['Criar empresa']);
+  btn.addEventListener('click', async () => {
+    const n = nome.value.trim();
+    if (!n){ msg.textContent = 'Coloque o nome da empresa.'; return; }
+    const outros = emails.value.split(/[\s,;]+/).map(x => x.trim().toLowerCase()).filter(x => x && x !== CURRENT_USER.email);
+    const ruim = outros.find(x => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x));
+    if (ruim){ msg.textContent = 'Esse e-mail parece errado: ' + ruim; return; }
+    const todos = [CURRENT_USER.email].concat(Array.from(new Set(outros)));
+    const pct = Math.round(10000 / todos.length) / 10000;
+    const socios = todos.map((em, i) => ({nome: i === 0 ? CURRENT_USER.nome : '', email: em, pct, pl: TAX2026.salMin, meta: 0}));
+    const st = empresaState({});
+    st.empresaNome = n; st.empresaCnpj = cnpj.value.trim();
+    st.regime.socios = socios;
+    btn.disabled = true; btn.textContent = 'Criando…';
+    try{
+      const ref = doc(collection(dbfs, 'empresas'));
+      await setDoc(ref, Object.assign(empresaPayload(st), {criadoPor: CURRENT_USER.uid, criadoEm: serverTimestamp()}));
+      APP.empresas = null;
+      abrirEmpresa(ref.id);
+    }catch(e){ console.warn(e); msg.textContent = 'Não consegui criar (' + ((e && e.code) || 'erro') + ').'; btn.disabled = false; btn.textContent = 'Criar empresa'; }
+  });
+  form.appendChild(el('div', {style:'display:flex;gap:8px;margin-top:8px;'}, [btn, el('button', {class:'btn btn-secondary', type:'button', onclick: goHome}, ['Cancelar'])]));
+  wrap.appendChild(form);
+  return wrap;
+}
+
+function empresaPayload(st){
+  const clean = JSON.parse(JSON.stringify(st));
+  CAMPOS_PESSOAIS.forEach(k => { delete clean[k]; });
+  delete clean._empresa;
+  return {
+    nome: st.empresaNome || '', cnpj: st.empresaCnpj || '',
+    membrosEmails: emailsSocios(st),
+    dados: clean,
+    membros: {[CURRENT_USER.uid]: {nome: CURRENT_USER.nome || '', email: CURRENT_USER.email}},
+    atualizadoEm: serverTimestamp(),
+    atualizadoPor: {nome: CURRENT_USER.nome || '', email: CURRENT_USER.email},
+  };
+}
+let SAVE_EMP_TIMER = null;
+function scheduleSaveEmpresa(){
+  clearTimeout(SAVE_EMP_TIMER);
+  markSaving();
+  const id = APP.empresaId, st = APP.state;
+  SAVE_EMP_TIMER = setTimeout(async () => {
+    try{ await setDoc(doc(dbfs, 'empresas', id), empresaPayload(st), {merge:true}); markSaved(); }
+    catch(e){ console.warn('save empresa', e); markSaveError(); }
+  }, 700);
+}
+async function abrirEmpresa(id){
+  APP.empresaId = id; APP.model = 'prestador'; APP.state = null; APP.view = 'wizard'; APP.step = 'empresa';
+  render();
+  try{
+    const snap = await getDoc(doc(dbfs, 'empresas', id));
+    if (!snap.exists()) throw {code:'não encontrada'};
+    APP.empresaDoc = snap.data();
+    const st = empresaState(APP.empresaDoc.dados);
+    st.empresaNome = st.empresaNome || APP.empresaDoc.nome || '';
+    st.empresaCnpj = st.empresaCnpj || APP.empresaDoc.cnpj || '';
+    // Se o meu e-mail está na lista mas ainda sem meta, puxa da minha conta.
+    const eu = st.regime.socios.find(x => String(x.email||'').toLowerCase() === CURRENT_USER.email);
+    if (eu && !parseBR(eu.meta)){ const m = minhaMetaPessoal(); if (m > 0) eu.meta = m; }
+    if (eu && !eu.nome) eu.nome = CURRENT_USER.nome;
+    APP.state = st;
+    render();
+    persist(); // registra que eu entrei (membros) e salva a meta puxada
+  }catch(e){
+    console.warn('abrir empresa', e);
+    APP.empresaId = null; APP.view = 'menu'; APP.empresasErro = (e && e.code) || 'erro'; render();
+  }
+}
+// Meta pessoal (o que este negócio precisa entregar) a partir da conta da própria pessoa.
+function minhaMetaPessoal(){
+  try{ const st = mergeWithDefaults('prestador', lerModelo('prestador')); return computeMetaNegocio(st); }
+  catch(e){ return 0; }
+}
+
+function renderStepEmpresa(panel){
+  const st = APP.state, g = st.regime;
+  const $ = (id) => document.getElementById(id);
+  function rerender(){ const y = window.scrollY; render(); requestAnimationFrame(() => window.scrollTo(0, y)); }
+  const d = APP.empresaDoc || {};
+  panelHead(panel, 'Empresa', 'Empresa e sócios',
+    'Dados da empresa, quem são os sócios, quanto cada um tira de pró-labore, a % de cada um no lucro e quanto cada um precisa levar por mês.');
+  const body = el('div', {class:'panel-body'});
+  if (d.atualizadoPor && d.atualizadoPor.email && d.atualizadoPor.email !== CURRENT_USER.email)
+    body.appendChild(el('p', {class:'help'}, ['Última alteração por ' + (d.atualizadoPor.nome || d.atualizadoPor.email) + (fmtWhen(d.atualizadoEm) ? ' em ' + fmtWhen(d.atualizadoEm) : '') + '.']));
+
+  const info = el('div', {class:'cat-group'});
+  info.appendChild(el('div', {class:'cat-title'}, ['Dados da empresa']));
+  const txt = (label, key, ph) => {
+    const r = el('div', {class:'field-row'});
+    const i = el('input', {class:'inp text-left', value: st[key] || '', placeholder: ph || ''});
+    i.addEventListener('input', () => { st[key] = i.value; persist(); });
+    r.appendChild(el('label', {}, [label])); r.appendChild(i); info.appendChild(r);
+  };
+  txt('Nome da empresa', 'empresaNome', 'Ex.: Clínica Sorriso Ltda');
+  txt('CNPJ', 'empresaCnpj', 'opcional');
+  body.appendChild(info);
+
+  const box = el('div', {class:'cat-group'});
+  box.appendChild(el('div', {class:'cat-title'}, ['Sócios']));
+  box.appendChild(el('p', {class:'help'}, ['Cada sócio recebe o ', el('b', {}, ['pró-labore']), ' (o "salário" do sócio) e a ', el('b', {}, ['parte do lucro']), ' (o que sobra depois dos custos, impostos, pró-labores e da reserva pros sonhos da empresa).']));
+  const membros = d.membros || {};
+  const entrouEmails = new Set(Object.values(membros).map(m => String(m.email || '').toLowerCase()));
+  entrouEmails.add(CURRENT_USER.email);
+  const tab = el('div', {class:'emp-socios'});
+  tab.appendChild(el('div', {class:'emp-srow reg-shead'}, ['Nome', 'E-mail', '% no lucro', 'Pró-labore', 'Precisa levar/mês', ''].map(x => el('span', {}, [x]))));
+  g.socios.forEach((x, i) => {
+    const souEu = String(x.email || '').toLowerCase() === CURRENT_USER.email;
+    const row = el('div', {class:'emp-srow'});
+    const lbl = (t) => el('span', {class:'reg-mlbl'}, [t]);
+    const nome = el('input', {class:'inp text-left', value:x.nome || '', placeholder:'nome'});
+    nome.addEventListener('input', () => { x.nome = nome.value; persist(); });
+    row.appendChild(el('div', {}, [lbl('Nome'), nome]));
+    const em = el('input', {class:'inp text-left', value:x.email || '', placeholder:'email@exemplo.com', type:'email'});
+    if (souEu) em.readOnly = true;
+    em.addEventListener('change', () => { x.email = em.value.trim().toLowerCase(); persist(); rerender(); });
+    row.appendChild(el('div', {}, [lbl('E-mail'), em, el('div', {class:'help', style:'margin:2px 0 0;'}, [souEu ? '👤 você' : (entrouEmails.has(String(x.email||'').toLowerCase()) ? '✓ já entrou' : '⏳ ainda não entrou')])]));
+    row.appendChild(el('div', {}, [lbl('% no lucro'), numberInput({value:x.pct, kind:'pct', onInput:(n)=>{ x.pct = n; persist(); refresh(); }})]));
+    row.appendChild(el('div', {}, [lbl('Pró-labore'), numberInput({value:x.pl, kind:'brl', onInput:(n)=>{ x.pl = n; persist(); refresh(); }})]));
+    const metaBox = el('div', {}, [lbl('Precisa levar/mês'), numberInput({value:x.meta||0, kind:'brl', onInput:(n)=>{ x.meta = n; persist(); refresh(); }})]);
+    if (souEu) metaBox.appendChild(el('button', {type:'button', class:'auth-link', style:'padding:0;font-size:12px;', onclick:()=>{
+      const m = minhaMetaPessoal();
+      if (m > 0){ x.meta = Math.round(m * 100) / 100; persist(); rerender(); } else alert('Sua meta ainda está em branco. Preencha Sonhos, Vida e Meta em "Minha clínica" e volte aqui.');
+    }}, ['↻ puxar da minha conta']));
+    row.appendChild(metaBox);
+    row.appendChild(souEu ? el('span') : el('button', {class:'row-del', title:'tirar sócio', onclick:()=>{
+      if (!confirm('Tirar ' + (x.nome || x.email || 'este sócio') + ' da empresa? Ele deixa de ver os dados.')) return;
+      g.socios.splice(i, 1); persist(); rerender();
+    }}, ['✕']));
+    tab.appendChild(row);
+  });
+  box.appendChild(tab);
+  box.appendChild(el('div', {class:'help', id:'emp-soma-pct'}, ['']));
+  box.appendChild(el('button', {class:'btn btn-secondary btn-sm', type:'button', onclick:()=>{
+    g.socios.push({nome:'', email:'', pct:0, pl:TAX2026.salMin, meta:0}); persist(); rerender();
+  }}, ['+ Adicionar sócio']));
+  const convite = 'Oi! Cadastrei a nossa empresa no Precifica pra gente fazer a precificação juntos. Crie sua conta neste link usando o seu e-mail cadastrado como sócio: ' + linkApp();
+  const cop = el('div', {class:'help', style:'margin:0;'}, ['']);
+  box.appendChild(el('div', {class:'callout', style:'margin-top:12px;'}, [
+    el('b', {}, ['Como os sócios entram: ']), 'cada um cria a conta no Precifica com o e-mail que está aqui e confirma o e-mail. A empresa aparece sozinha na tela inicial dele.',
+    el('div', {style:'margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;'}, [
+      el('button', {class:'btn btn-secondary btn-sm', type:'button', onclick: async () => {
+        try{ await navigator.clipboard.writeText(convite); cop.textContent = '✓ Mensagem copiada — cole no WhatsApp do sócio.'; } catch(e){ cop.textContent = convite; }
+      }}, ['📋 Copiar convite']), cop]),
+  ]));
+  body.appendChild(box);
+  body.appendChild(el('div', {class:'resumo-hero ok reg-meta-box', id:'emp-meta'}));
+  panel.appendChild(body);
+  footNav(panel, {});
+
+  function refresh(){
+    const soma = g.socios.reduce((s, x) => s + parseBR(x.pct), 0);
+    const sp = $('emp-soma-pct'); if (sp) sp.textContent = Math.abs(soma - 1) > 0.001 ? '⚠️ As % somam ' + fmtNum(soma * 100, 1) + '%. Precisam somar 100%.' : '✓ As % somam 100%.';
+    const sem = g.socios.filter(x => !x.email).length;
+    if (sem && sp) sp.textContent += ' · ' + sem + ' sócio(s) sem e-mail — sem e-mail ele não consegue entrar.';
+    const mb = $('emp-meta'); if (!mb) return;
+    const ms = metaSociosEmpresa(st), so = sumSonhosEmp(st);
+    mb.innerHTML = '<div class="lbl">Meta da empresa (lucro por mês)</div><div class="val">' + fmtBRL(ms + so) + '</div>'
+      + '<div class="lbl">' + fmtBRL(ms) + ' pra todos os sócios baterem a meta' + (so > 0 ? ' + ' + fmtBRL(so) + ' pros sonhos da empresa' : '') + '.</div>'
+      + '<div class="lbl" style="font-weight:500;">Quando a % de um sócio é pequena perto do que ele precisa, a empresa precisa lucrar mais pra ele chegar lá — por isso pode passar da soma das metas.</div>';
+  }
+  requestAnimationFrame(refresh);
+}
+
+function renderStepSonhosEmp(panel){
+  const st = APP.state;
+  st.sonhosEmp = st.sonhosEmp || [];
+  const $ = (id) => document.getElementById(id);
+  function rerender(){ const y = window.scrollY; render(); requestAnimationFrame(() => window.scrollTo(0, y)); }
+  panelHead(panel, 'Empresa', 'Sonhos da empresa',
+    'O que vocês querem conquistar PARA a empresa: equipamento, reforma, nova cadeira, reserva de caixa… O app calcula quanto guardar por mês, e isso entra na meta da empresa.');
+  const body = el('div', {class:'panel-body'});
+  const tab = el('div', {class:'emp-sonhos'});
+  tab.appendChild(el('div', {class:'emp-sorow reg-shead'}, ['Tipo', 'O quê', 'Valor', 'Em quantos meses', 'Juros ao ano (se financiar)', 'Por mês', ''].map(x => el('span', {}, [x]))));
+  st.sonhosEmp.forEach((x, i) => {
+    const row = el('div', {class:'emp-sorow'});
+    const lbl = (t) => el('span', {class:'reg-mlbl'}, [t]);
+    const sel = el('select', {class:'inp text-left'});
+    SONHO_EMP_TIPOS.forEach(t => { const o = el('option', {value:t}, [t]); if (t === x.tipo) o.selected = true; sel.appendChild(o); });
+    sel.addEventListener('change', () => { x.tipo = sel.value; persist(); });
+    row.appendChild(el('div', {}, [lbl('Tipo'), sel]));
+    const nm = el('input', {class:'inp text-left', value:x.nome || '', placeholder:'ex.: scanner intraoral'});
+    nm.addEventListener('input', () => { x.nome = nm.value; persist(); });
+    row.appendChild(el('div', {}, [lbl('O quê'), nm]));
+    row.appendChild(el('div', {}, [lbl('Valor'), numberInput({value:x.valor||0, kind:'brl', onInput:(n)=>{ x.valor = n; persist(); refresh(); }})]));
+    row.appendChild(el('div', {}, [lbl('Em quantos meses'), numberInput({value:x.meses||12, kind:'num', dec:0, onInput:(n)=>{ x.meses = n; persist(); refresh(); }})]));
+    row.appendChild(el('div', {}, [lbl('Juros ao ano (se financiar)'), numberInput({value:x.taxa||0, kind:'pct', onInput:(n)=>{ x.taxa = n; persist(); refresh(); }})]));
+    row.appendChild(el('div', {}, [lbl('Por mês'), el('b', {class:'mono', id:'emp-so-' + i}, [''])]));
+    row.appendChild(el('button', {class:'row-del', title:'remover', onclick:()=>{ st.sonhosEmp.splice(i, 1); persist(); rerender(); }}, ['✕']));
+    tab.appendChild(row);
+  });
+  body.appendChild(tab);
+  if (!st.sonhosEmp.length) body.appendChild(el('p', {class:'help'}, ['Nenhum sonho ainda. Comece adicionando um.']));
+  body.appendChild(el('button', {class:'btn btn-secondary btn-sm', type:'button', onclick:()=>{ st.sonhosEmp.push({tipo:SONHO_EMP_TIPOS[0], nome:'', valor:0, meses:12, taxa:0}); persist(); rerender(); }}, ['+ Adicionar sonho da empresa']));
+  const tot = el('div', {class:'field-total', style:'margin-top:16px;'}, [el('label', {style:'font-weight:800;'}, ['Guardar por mês pros sonhos da empresa']), el('b', {class:'mono', id:'emp-so-tot', style:'font-size:18px;'}, [''])]);
+  body.appendChild(tot);
+  body.appendChild(el('ul', {class:'note-list', style:'margin-top:12px;'}, [
+    el('li', {}, ['Sem juros: valor ÷ meses (vocês juntam e compram à vista). Com juros: parcela do financiamento (Tabela Price).']),
+    el('li', {}, ['Esse valor sai do lucro antes de dividir entre os sócios.']),
+  ]));
+  panel.appendChild(body);
+  footNav(panel, {});
+  function refresh(){
+    st.sonhosEmp.forEach((x, i) => { const e = $('emp-so-' + i); if (e) e.textContent = fmtBRL(sonhoEmpMensal(x)); });
+    const t = $('emp-so-tot'); if (t) t.textContent = fmtBRL(sumSonhosEmp(st));
+  }
+  requestAnimationFrame(refresh);
+}
+
+function renderStepResumoEmp(panel){
+  const st = APP.state;
+  const r = computeResumo('prestador', st);
+  const R = calcRegime('prestador', st);
+  const ss = st.regime.socios;
+  const somaPl = ss.reduce((s, x) => s + parseBR(x.pl), 0);
+  const sonhos = sumSonhosEmp(st);
+  panelHead(panel, 'Empresa', 'Resumo da empresa', 'A foto da sociedade: se o preço de vocês paga a empresa, os sonhos dela e o que cada sócio precisa levar.');
+  const body = el('div', {class:'panel-body'});
+  const falta = r.meta - r.liquido;
+  body.appendChild(el('div', {class:'resumo-hero ' + (falta > 0 ? 'perda' : 'ok')}, [
+    el('div', {class:'lbl'}, [falta > 0 ? 'Pra empresa bater a meta, faltam' : '✅ A empresa bate a meta, com folga de']),
+    el('div', {class:'val'}, [fmtBRL(Math.abs(falta))]),
+    el('div', {class:'lbl'}, ['por mês. Lucro projetado ' + fmtBRL(r.liquido) + ' · meta ' + fmtBRL(r.meta) + '.']),
+  ]));
+  const grid = el('div', {class:'stat-grid'});
+  grid.appendChild(statTile(null, '📥 Faturamento projetado', fmtBRL(r.receita)));
+  grid.appendChild(statTile(null, '🏢 Custos fixos da empresa', fmtBRL(r.custoFixoNegocio)));
+  grid.appendChild(statTile(null, '⏱ Horas atendidas / disponíveis', fmtNum(r.horasAtendidas, 0) + ' / ' + fmtNum(r.horasDisponiveis, 0) + ' h'));
+  grid.appendChild(statTile(null, '🧾 Imposto (Simples, Anexo ' + R.pj.anexo + ')', fmtNum(R.pj.aliquota * 100, 1) + '%'));
+  grid.appendChild(statTile(null, '🎯 Sonhos da empresa (por mês)', fmtBRL(sonhos)));
+  grid.appendChild(statTile(null, '🏆 Lucro da empresa (mês)', fmtBRL(r.liquido), 'hi'));
+  body.appendChild(grid);
+  const lista = el('div', {class:'reg-cmp reg-cmp-soc'});
+  lista.appendChild(el('div', {class:'reg-cl reg-ch'}, [el('span', {}, ['Sócio']), el('b', {}, ['Pró-labore']), el('b', {}, ['Parte do lucro']), el('b', {}, ['Leva no mês']), el('b', {}, ['Precisa'])]));
+  const pool = r.liquido - somaPl - sonhos;
+  ss.forEach(x => {
+    const pl = parseBR(x.pl), parte = parseBR(x.pct) * pool, leva = pl + parte, meta = parseBR(x.meta);
+    lista.appendChild(el('div', {class:'reg-cl'}, [el('span', {}, [(x.nome || x.email || 'Sócio') + ' (' + fmtNum(parseBR(x.pct) * 100, 0) + '%)']),
+      el('b', {class:'mono'}, [fmtBRL(pl)]), el('b', {class:'mono'}, [fmtBRL(parte)]), el('b', {class:'mono'}, [fmtBRL(leva) + (meta > 0 ? (leva >= meta ? ' ✅' : ' ❌') : '')]), el('b', {class:'mono'}, [meta > 0 ? fmtBRL(meta) : '—'])]));
+  });
+  body.appendChild(el('div', {class:'cat-title', style:'margin-top:18px;'}, ['Quanto cada sócio leva']));
+  body.appendChild(lista);
+  body.appendChild(el('p', {class:'help'}, ['Valores antes do INSS e do IR de cada sócio (veja em Impostos da empresa). A parte do lucro já desconta os pró-labores e a reserva dos sonhos da empresa.']));
+  if (pool < 0) body.appendChild(el('div', {class:'svc-diff falta'}, ['Depois dos pró-labores e dos sonhos da empresa, ', el('b', {}, ['falta ' + fmtBRL(-pool)]), ' por mês. Revejam os preços, o volume de atendimentos, os pró-labores ou o prazo dos sonhos.']));
+  panel.appendChild(body);
+  footNav(panel, {});
 }
 
 // Quadro do Resumo: CPF/PJ escolhido e, em sociedade, quanto cada sócio leva.
