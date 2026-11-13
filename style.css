@@ -551,3 +551,14 @@
   .alunos-row{grid-template-columns:1.6fr 1.3fr 1.2fr 1.2fr 1fr .8fr !important;}
   @media (max-width:800px){.cred-row,.alunos-row{grid-template-columns:1fr 1fr !important;}}
   .btn-ghost.on{border-color:var(--ink);font-weight:700;}
+
+/* ---- Prestador: sub-opções (clínica de terceiros / formas de pagamento) ---- */
+.svc-sub{ margin:8px 0 4px 28px; padding:10px 12px; border-left:3px solid var(--border-strong); background:rgba(0,0,0,.02); border-radius:8px; }
+.svc-sub .field-row{ margin:4px 0; }
+.svc-pag{ margin:8px 0; padding:8px 10px; border:1px solid var(--border-strong); border-radius:8px; font-size:13px; }
+.svc-pag > div{ display:flex; justify-content:space-between; gap:8px; padding:2px 0; }
+.svc-pag > div.help{ justify-content:flex-end; }
+.svc-pag .svc-pag-dica{ display:block; margin-top:6px; padding-top:6px; border-top:1px dashed var(--border-strong); color:var(--ink-soft); }
+.svc-q .svc-seg{ display:flex; width:100%; }
+.svc-q .svc-seg button{ flex:1 1 auto; padding:5px 6px; white-space:nowrap; }
+@media (max-width:560px){ .svc-sub{ margin-left:0; } }

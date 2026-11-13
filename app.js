@@ -39,7 +39,9 @@ const VIDA_LABELS_V1 = ["Aluguel ou financiamento", "Condomínio", "IPTU (anual 
 const VIDA_ALIASES = {"Pensão alimentícia": "Pensão alimentícia (que você paga)"};
 // Itens que contam como gasto com filhos (pro "gasto médio por filho").
 const VIDA_ITENS_FILHOS = ["Escola / faculdade dos filhos","Babá / berçário / creche","Fraldas e itens de bebê","Material escolar e uniforme (anual ÷ 12)","Roupas e calçados dos filhos","Plano de saúde dos filhos","Atividades dos filhos (aulas extras)","Pensão alimentícia (que você paga)"];
-const NEGOCIO_CATS = {"prestador": [{"name": "ESPAÇO DE ATENDIMENTO", "items": ["Aluguel de sala / consultório / clínica", "Condomínio comercial", "IPTU comercial (anual ÷ 12)", "Luz / energia da sala", "Água", "Internet e telefone", "Limpeza (diarista, produtos)", "Manutenção predial e reformas", "Segurança (alarme, câmeras)", "Decoração e ambientação (amortização mensal)"]}, {"name": "EQUIPAMENTOS", "items": ["Depreciação de equipamentos (valor ÷ vida útil)", "Manutenção e calibração", "Seguro de equipamentos", "Licenças de software clínico/prontuário eletrônico", "Computador, impressora, câmera"]}, {"name": "EQUIPE", "items": ["Secretária / recepcionista (salário + encargos)", "Auxiliar técnico (enfermeiro, aux. odonto, estagiário)", "Limpeza terceirizada", "Contador", "Treinamentos e atualizações da equipe"]}, {"name": "INSUMOS E MATERIAIS FIXOS", "items": ["Material de escritório (papel, canetas, impressos)", "Água, café, lanche para pacientes", "Descartáveis gerais (papel toalha, álcool)", "EPIs da equipe", "Reposição de itens clínicos gerais"]}, {"name": "MARKETING E CAPTAÇÃO", "items": ["Gestão de redes sociais / social media", "Tráfego pago (Meta, Google)", "Site e hospedagem", "Cartões, panfletos, material gráfico", "Participação em congressos e eventos"]}, {"name": "ADMINISTRATIVO E LEGAL", "items": ["Anuidades de conselho (CRM, CRO, CRP, CAU, CRC)", "Seguros de responsabilidade profissional", "Alvarás e licenças (Vigilância Sanitária)", "Jurídico (mensal ou provisionado)", "Tarifas bancárias e taxas de pagamento mensais"]}, {"name": "RESERVA", "items": ["Caixa mínimo da operação", "Imprevistos (10%)"]}], "produto": [{"name": "ESTRUTURA FÍSICA", "items": ["Aluguel da fábrica / loja / escritório", "Condomínio comercial", "IPTU comercial (÷12)", "Luz / energia da operação", "Água / esgoto", "Gás industrial (se usar)", "Internet e telefone", "Limpeza (produtos, serviço terceirizado)", "Manutenção predial", "Segurança (alarme, câmeras, vigilância)"]}, {"name": "EQUIPAMENTOS E DEPRECIAÇÃO", "items": ["Manutenção de máquinas", "Depreciação de equipamentos (valor ÷ vida útil em meses)", "Aluguel de equipamentos (se alugar)", "Ferramentas de reposição"]}, {"name": "EQUIPE", "items": ["Salários (CLT) — base total", "Encargos e benefícios (≈70% do salário)", "Vale transporte / alimentação", "Plano de saúde da equipe", "Treinamentos e capacitações", "Freelancers e prestadores fixos"]}, {"name": "SOFTWARES E SISTEMAS", "items": ["ERP / sistema de gestão", "Sistema de estoque / PDV", "E-commerce (plataforma, hospedagem)", "Design e edição (Canva, Photoshop)", "Outras assinaturas (CRM, e-mail, IA)"]}, {"name": "MARKETING E VENDAS", "items": ["Tráfego pago (Meta, Google)", "Agência ou assessoria de marketing", "Produção de conteúdo / fotografia", "Influenciadores / parcerias", "Materiais promocionais e brindes", "Participação em feiras e eventos"]}, {"name": "ADMINISTRATIVO E FINANCEIRO", "items": ["Contador", "Jurídico (mensal ou provisionado)", "Tarifas bancárias", "Certificações e licenças", "Seguros da empresa"]}, {"name": "RESERVA", "items": ["Caixa mínimo da empresa (reserva mensal)", "Imprevistos operacionais (10%)"]}], "conhecimento": [{"name": "PLATAFORMAS E SOFTWARES", "items": ["Plataforma de cursos (Hotmart, Kiwify, Hubla) — assinatura fixa", "Plataforma de comunidade (Circle, Discord paid, Telegram VIP)", "Plataforma de lives (Zoom, StreamYard, Riverside)", "E-mail marketing (ActiveCampaign, RD, MailerLite)", "CRM (RD Station, Pipedrive, HubSpot)", "Página / Site / Landing pages (Wordpress, Webflow, Klicksend)", "Ferramentas de IA (ChatGPT Plus, Claude Pro, etc.)", "Design (Canva Pro, Adobe Creative, Figma)", "Automações (Zapier, Make)", "Armazenamento e backup (Drive, Dropbox)", "Outras assinaturas recorrentes"]}, {"name": "EQUIPE FIXA", "items": ["Assistente virtual / executiva", "Social media / gestão de conteúdo", "Editor de vídeo", "Designer", "Copywriter", "Tráfego pago (gestor)", "Atendimento / suporte ao aluno", "Contador", "Jurídico"]}, {"name": "MARKETING E CAPTAÇÃO", "items": ["Tráfego pago (Meta, Google, YouTube)", "Produção de conteúdo orgânico (editor, fotógrafo)", "Permutas e parcerias (custo real)", "Eventos, congressos, lives externas", "Materiais gráficos e de apoio"]}, {"name": "ESTRUTURA FÍSICA", "items": ["Aluguel de escritório / coworking (se houver)", "Internet e telefone dedicados", "Luz / água (proporcional)", "Equipamentos (depreciação mensal: câmera, microfone, notebook)", "Material de gravação (iluminação, fundo, acústica)"]}, {"name": "ADMINISTRATIVO", "items": ["Tarifas bancárias (conta PJ, Pix, boletos)", "Certificação digital", "Seguros", "Licenças e registros"]}, {"name": "RESERVA", "items": ["Caixa mínimo da empresa", "Imprevistos (10%)"]}]};
+// Lista de custos fixos do Prestador antes da versão de nov/2026 (para casar valores salvos pelo nome).
+const NEGOCIO_LABELS_V1 = {prestador: ["Aluguel de sala / consultório / clínica", "Condomínio comercial", "IPTU comercial (anual ÷ 12)", "Luz / energia da sala", "Água", "Internet e telefone", "Limpeza (diarista, produtos)", "Manutenção predial e reformas", "Segurança (alarme, câmeras)", "Decoração e ambientação (amortização mensal)", "Depreciação de equipamentos (valor ÷ vida útil)", "Manutenção e calibração", "Seguro de equipamentos", "Licenças de software clínico/prontuário eletrônico", "Computador, impressora, câmera", "Secretária / recepcionista (salário + encargos)", "Auxiliar técnico (enfermeiro, aux. odonto, estagiário)", "Limpeza terceirizada", "Contador", "Treinamentos e atualizações da equipe", "Material de escritório (papel, canetas, impressos)", "Água, café, lanche para pacientes", "Descartáveis gerais (papel toalha, álcool)", "EPIs da equipe", "Reposição de itens clínicos gerais", "Gestão de redes sociais / social media", "Tráfego pago (Meta, Google)", "Site e hospedagem", "Cartões, panfletos, material gráfico", "Participação em congressos e eventos", "Anuidades de conselho (CRM, CRO, CRP, CAU, CRC)", "Seguros de responsabilidade profissional", "Alvarás e licenças (Vigilância Sanitária)", "Jurídico (mensal ou provisionado)", "Tarifas bancárias e taxas de pagamento mensais", "Caixa mínimo da operação", "Imprevistos (10%)"]};
+const NEGOCIO_CATS = {"prestador": [{"name": "ESPAÇO DE ATENDIMENTO", "items": ["Aluguel de sala / consultório / clínica", "Condomínio comercial", "IPTU comercial (anual ÷ 12)", "Luz / energia da sala", "Água", "Internet e telefone", "Limpeza (diarista, produtos)", "Manutenção predial e reformas", "Segurança (alarme, câmeras)", "Decoração e ambientação (amortização mensal)"]}, {"name": "EQUIPAMENTOS", "items": ["Depreciação de equipamentos (valor ÷ vida útil)", "Manutenção e calibração", "Seguro de equipamentos", "Licenças de software clínico/prontuário eletrônico", "Computador, impressora, câmera", "Manutenção de cadeira, compressor e bomba a vácuo", "Dosimetria e laudos do raio-X"]}, {"name": "EQUIPE", "items": ["Secretária / recepcionista (salário + encargos)", "Auxiliar técnico (enfermeiro, aux. odonto, estagiário)", "Limpeza terceirizada", "Contador", "Treinamentos e atualizações da equipe"]}, {"name": "INSUMOS E MATERIAIS FIXOS", "items": ["Material de escritório (papel, canetas, impressos)", "Água, café, lanche para pacientes", "Descartáveis gerais (papel toalha, álcool)", "EPIs da equipe", "Reposição de itens clínicos gerais"]}, {"name": "BIOSSEGURANÇA E ESTERILIZAÇÃO", "items": ["Embalagens de esterilização (grau cirúrgico)", "Testes biológicos e químicos da autoclave", "Manutenção e validação da autoclave", "Coleta de resíduos de saúde (lixo infectante)", "Lavanderia (jalecos, campos, toalhas)"]}, {"name": "MARKETING E CAPTAÇÃO", "items": ["Gestão de redes sociais / social media", "Tráfego pago (Meta, Google)", "Site e hospedagem", "Cartões, panfletos, material gráfico", "Participação em congressos e eventos"]}, {"name": "ADMINISTRATIVO E LEGAL", "items": ["Anuidades de conselho (CRM, CRO, CRP, CAU, CRC)", "Seguros de responsabilidade profissional", "Alvarás e licenças (Vigilância Sanitária)", "Jurídico (mensal ou provisionado)", "Tarifas bancárias e taxas de pagamento mensais", "Sistema de agenda / confirmação de consultas"]}, {"name": "RESERVA", "items": ["Caixa mínimo da operação", "Imprevistos (10%)"]}], "produto": [{"name": "ESTRUTURA FÍSICA", "items": ["Aluguel da fábrica / loja / escritório", "Condomínio comercial", "IPTU comercial (÷12)", "Luz / energia da operação", "Água / esgoto", "Gás industrial (se usar)", "Internet e telefone", "Limpeza (produtos, serviço terceirizado)", "Manutenção predial", "Segurança (alarme, câmeras, vigilância)"]}, {"name": "EQUIPAMENTOS E DEPRECIAÇÃO", "items": ["Manutenção de máquinas", "Depreciação de equipamentos (valor ÷ vida útil em meses)", "Aluguel de equipamentos (se alugar)", "Ferramentas de reposição"]}, {"name": "EQUIPE", "items": ["Salários (CLT) — base total", "Encargos e benefícios (≈70% do salário)", "Vale transporte / alimentação", "Plano de saúde da equipe", "Treinamentos e capacitações", "Freelancers e prestadores fixos"]}, {"name": "SOFTWARES E SISTEMAS", "items": ["ERP / sistema de gestão", "Sistema de estoque / PDV", "E-commerce (plataforma, hospedagem)", "Design e edição (Canva, Photoshop)", "Outras assinaturas (CRM, e-mail, IA)"]}, {"name": "MARKETING E VENDAS", "items": ["Tráfego pago (Meta, Google)", "Agência ou assessoria de marketing", "Produção de conteúdo / fotografia", "Influenciadores / parcerias", "Materiais promocionais e brindes", "Participação em feiras e eventos"]}, {"name": "ADMINISTRATIVO E FINANCEIRO", "items": ["Contador", "Jurídico (mensal ou provisionado)", "Tarifas bancárias", "Certificações e licenças", "Seguros da empresa"]}, {"name": "RESERVA", "items": ["Caixa mínimo da empresa (reserva mensal)", "Imprevistos operacionais (10%)"]}], "conhecimento": [{"name": "PLATAFORMAS E SOFTWARES", "items": ["Plataforma de cursos (Hotmart, Kiwify, Hubla) — assinatura fixa", "Plataforma de comunidade (Circle, Discord paid, Telegram VIP)", "Plataforma de lives (Zoom, StreamYard, Riverside)", "E-mail marketing (ActiveCampaign, RD, MailerLite)", "CRM (RD Station, Pipedrive, HubSpot)", "Página / Site / Landing pages (Wordpress, Webflow, Klicksend)", "Ferramentas de IA (ChatGPT Plus, Claude Pro, etc.)", "Design (Canva Pro, Adobe Creative, Figma)", "Automações (Zapier, Make)", "Armazenamento e backup (Drive, Dropbox)", "Outras assinaturas recorrentes"]}, {"name": "EQUIPE FIXA", "items": ["Assistente virtual / executiva", "Social media / gestão de conteúdo", "Editor de vídeo", "Designer", "Copywriter", "Tráfego pago (gestor)", "Atendimento / suporte ao aluno", "Contador", "Jurídico"]}, {"name": "MARKETING E CAPTAÇÃO", "items": ["Tráfego pago (Meta, Google, YouTube)", "Produção de conteúdo orgânico (editor, fotógrafo)", "Permutas e parcerias (custo real)", "Eventos, congressos, lives externas", "Materiais gráficos e de apoio"]}, {"name": "ESTRUTURA FÍSICA", "items": ["Aluguel de escritório / coworking (se houver)", "Internet e telefone dedicados", "Luz / água (proporcional)", "Equipamentos (depreciação mensal: câmera, microfone, notebook)", "Material de gravação (iluminação, fundo, acústica)"]}, {"name": "ADMINISTRATIVO", "items": ["Tarifas bancárias (conta PJ, Pix, boletos)", "Certificação digital", "Seguros", "Licenças e registros"]}, {"name": "RESERVA", "items": ["Caixa mínimo da empresa", "Imprevistos (10%)"]}]};
 /* =========================================================================
    PRECIFICA — motor de cálculo + estado
    Replica os 3 modelos da planilha 4C: Prestador de Serviço, Produto Físico,
@@ -416,6 +418,7 @@ function defaultState(modelKey){
     vidaLabels: VIDA_FLAT.map(it => it.label),
     filhos: 0,
     negocio: negocioFlat(modelKey).map(() => 0),
+    negocioLabels: negocioFlat(modelKey).map(it => it.label),
     insumos: defaultInsumos(modelKey),
     hora: defaultHora(modelKey),
     calcular,
@@ -443,6 +446,20 @@ function migrateVida(parsed, defVida){
   return cur.map(l => byLabel[l] != null ? byLabel[l] : 0);
 }
 
+// Mesma ideia para os custos fixos (Meu Negócio): casa cada valor pelo nome do item.
+function migrateNegocio(modelKey, parsed, defNeg){
+  const vals = parsed.negocio;
+  if (!Array.isArray(vals)) return defNeg;
+  const cur = negocioFlat(modelKey).map(it => it.label);
+  const v1 = NEGOCIO_LABELS_V1[modelKey];
+  const labels = Array.isArray(parsed.negocioLabels) && parsed.negocioLabels.length === vals.length ? parsed.negocioLabels
+               : (v1 && vals.length === v1.length ? v1 : null);
+  if (!labels) return vals.length === cur.length ? vals : defNeg;
+  const byLabel = {};
+  labels.forEach((l, i) => { byLabel[l] = vals[i]; });
+  return cur.map(l => byLabel[l] != null ? byLabel[l] : 0);
+}
+
 function mergeWithDefaults(modelKey, parsed){
   const def = defaultState(modelKey);
   if (!parsed) return def;
@@ -450,7 +467,8 @@ function mergeWithDefaults(modelKey, parsed){
   merged.vida = migrateVida(parsed, def.vida);
   merged.vidaLabels = VIDA_FLAT.map(it => it.label);
   merged.filhos = parseBR(parsed.filhos) || 0;
-  if (!merged.negocio || merged.negocio.length !== def.negocio.length) merged.negocio = def.negocio;
+  merged.negocio = migrateNegocio(modelKey, parsed, def.negocio);
+  merged.negocioLabels = negocioFlat(modelKey).map(it => it.label);
   if (!merged.sonhos) merged.sonhos = def.sonhos;
   normalizeSonhos(merged.sonhos);
   merged.sonhosTaxas = Object.assign({}, def.sonhosTaxas, merged.sonhosTaxas);
@@ -595,7 +613,21 @@ function computeHora(modelKey, state){
 /* ---------------------------------------------------------------------- */
 
 // Configurações que valem para todos os serviços (Prestador).
-const CALC_GLOBAL_DEFAULT = {impostos:.06, cartao:.03, comissao:0, margem:.4, convenio:false};
+const CALC_GLOBAL_DEFAULT = {impostos:.06, cartao:.03, comissao:0, margem:.4, convenio:false,
+  // Atende na clínica de outra pessoa e divide o valor com ela.
+  terceiros:false, splitClinica:.4, materialClinica:false,
+  // Formas de pagamento: em vez de uma taxa única, a mistura de Pix / cartão à vista / parcelado.
+  pagAtivo:false, pagPix:.3, pagAvista:.3, pagParc:.4, taxaAvista:.025, taxaParc:.12, parcelas:10};
+// Taxa média de cartão que entra no preço justo (ponderada pelas formas de pagamento).
+function taxaCartaoMedia(g){
+  if (!g.pagAtivo) return parseBR(g.cartao);
+  const pix = parseBR(g.pagPix), av = parseBR(g.pagAvista), pa = parseBR(g.pagParc);
+  const tot = pix + av + pa;
+  if (tot <= 0) return 0;
+  return (av * parseBR(g.taxaAvista) + pa * parseBR(g.taxaParc)) / tot;
+}
+// Nº de sessões que entram no preço (tratamento com várias sessões).
+function nSessoes(r){ return r && r.tipo === 'sessoes' ? Math.max(1, parseBR(r.sessoes) || 1) : 1; }
 function calcGlobal(state){ return Object.assign({}, CALC_GLOBAL_DEFAULT, (state && state.calcGlobal) || {}); }
 // Material (Prestador): em vez de contar item por item, usa o GASTO MENSAL da clínica
 // com materiais, dividido pelas horas realmente atendidas no mês (Minha Hora).
@@ -610,9 +642,13 @@ function prestadorEfetivo(row, state){
   if (!state) return row;
   const g = calcGlobal(state);
   const r = Object.assign({}, row);
-  if (r.usaPadrao !== false){ r.impostos = g.impostos; r.cartao = g.cartao; r.comissao = g.comissao; r.margem = g.margem; }
+  if (r.usaPadrao !== false){ r.impostos = g.impostos; r.cartao = taxaCartaoMedia(g); r.comissao = g.comissao; r.margem = g.margem; }
   if (!g.convenio) r.repasse = 0;
-  if (r.matModo !== 'valor') r.insumos = taxaMaterialHora(state) * parseBR(r.dur);
+  // Clínica de terceiros: a parte que fica com a clínica sai de dentro do preço, como uma comissão.
+  r.split = g.terceiros ? parseBR(g.splitClinica) : 0;
+  if (r.matModo !== 'valor') r.insumos = (g.terceiros && g.materialClinica) ? 0 : taxaMaterialHora(state) * parseBR(r.dur) * nSessoes(r);
+  // Preços por forma de pagamento (só quando a pessoa detalha as formas).
+  if (g.pagAtivo) r._pag = {taxaAvista: parseBR(g.taxaAvista), taxaParc: parseBR(g.taxaParc), parcelas: Math.max(1, Math.round(parseBR(g.parcelas)||1))};
   return r;
 }
 // Gera as configurações gerais a partir de serviços já salvos (migração / exemplos).
@@ -636,8 +672,10 @@ function computeCalcAll(modelKey, rows, horaC, state){
 function computeCalcPrestador(rows, horaC){
   const custoHora = horaC.custoHora || 0;
   const out = rows.map(row => {
-    const B = parseBR(row.atend), C = parseBR(row.dur), D = parseBR(row.insumos), E = parseBR(row.outros);
-    const H = parseBR(row.impostos), I = parseBR(row.repasse), J = parseBR(row.comissao), K = parseBR(row.cartao), L = parseBR(row.margem);
+    // C = horas de agenda do atendimento inteiro (todas as sessões do tratamento).
+    const S = nSessoes(row);
+    const B = parseBR(row.atend), C = parseBR(row.dur) * S, D = parseBR(row.insumos), E = parseBR(row.outros);
+    const H = parseBR(row.impostos), I = parseBR(row.repasse), J = parseBR(row.comissao) + parseBR(row.split), K = parseBR(row.cartao), L = parseBR(row.margem);
     const F = C * custoHora;
     const G = D + E + F;
     // Imposto, repasse, comissão, cartão e margem são todos PEDAÇOS do preço:
@@ -655,8 +693,14 @@ function computeCalcPrestador(rows, horaC){
     let status = '';
     if (invalido) status = 'invalido';
     else if (B !== 0) status = liqHora >= custoHora*2 ? 'otimo' : (liqHora >= custoHora ? 'ok' : 'baixo');
+    // Preço por forma de pagamento: cada uma com a sua taxa, deixando a mesma margem.
+    let precos = null;
+    if (row._pag && !invalido){
+      const pf = (k) => { const d = 1 - H - J - k - L; return d <= 0 ? 0 : G / d; };
+      precos = {pix: pf(0), avista: pf(row._pag.taxaAvista), parcelado: pf(row._pag.taxaParc), parcelas: row._pag.parcelas};
+    }
     return Object.assign({}, row, {_custoTempo:F, _custoDireto:G, _precoParticular:M, _precoConvenio:N, _liquido:O, _horasTotais:P, _receita:Q, _status:status,
-      _somaPct: H + J + K + L + (I > 0 ? I : 0)});
+      _sessoes:S, _precos:precos, _somaPct: H + J + K + L + (I > 0 ? I : 0)});
   });
   const totals = {
     atendimentos: out.reduce((s,r)=>s+parseBR(r.atend),0),
@@ -1876,6 +1920,21 @@ function renderStepNegocio(panel){
     desc: m.negocioDesc,
     cats: NEGOCIO_CATS[APP.model], stateKey:'negocio', totalLabel: m.negocioTotalLabel,
   });
+  if (APP.model !== 'prestador') return;
+  // Dentista que atende na clínica de outra pessoa não paga a estrutura: avisa logo aqui.
+  const st = APP.state;
+  const g = st.calcGlobal || (st.calcGlobal = deriveCalcGlobal(st.calcular));
+  const box = el('div', {class:'svc-global', style:'margin:0 0 16px;'});
+  const chk = el('input', {type:'checkbox', id:'neg-terceiros'});
+  chk.checked = !!g.terceiros;
+  const dica = el('div', {class:'help', style:'margin-top:6px;'}, ['Coloque aqui só o que VOCÊ paga do seu bolso (ex.: CRO, seguro profissional, contador, cursos, seu próprio material de marketing). Aluguel, secretária, luz e equipamentos são da clínica — é por isso que ela fica com uma parte de cada atendimento. Essa porcentagem você informa em Meus Procedimentos.']);
+  dica.style.display = g.terceiros ? '' : 'none';
+  chk.addEventListener('change', () => { g.terceiros = chk.checked; dica.style.display = g.terceiros ? '' : 'none'; persist(); });
+  box.appendChild(el('label', {for:'neg-terceiros', class:'rendas-toggle'}, [chk,
+    el('span', {}, [el('b', {}, ['Atendo na clínica de outra pessoa (divido o valor com ela)'])])]));
+  box.appendChild(dica);
+  const body = panel.querySelector('.panel-body');
+  if (body) body.insertBefore(box, body.firstChild);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -2187,7 +2246,7 @@ function renderStepMeta(panel){
 /* ---------------------------------------------------------------------- */
 
 // Itens de Meu Negócio que podem ser material clínico (pra avisar sobre conta em dobro).
-const NEGOCIO_ITENS_MATERIAL = ['EPIs da equipe', 'Reposição de itens clínicos gerais', 'Descartáveis gerais (papel toalha, álcool)'];
+const NEGOCIO_ITENS_MATERIAL = ['EPIs da equipe', 'Embalagens de esterilização (grau cirúrgico)', 'Reposição de itens clínicos gerais', 'Descartáveis gerais (papel toalha, álcool)'];
 
 function renderStepInsumosPrestador(panel){
   const st = APP.state;
@@ -2749,12 +2808,34 @@ function renderStepCalcular(panel){
 
 /* ======================= PRESTADOR (cartões) ======================= */
 // Serviços prontos pra escolher. Durações são SUGESTÕES — o aluno ajusta à realidade dele.
+// [nome, minutos por sessão, opções]. Opções: s = nº de sessões (tratamento),
+// mensal = mensalidade (ortodontia), lab = costuma ter custo de laboratório.
 const SERVICOS_PRONTOS = [
-  {grupo:'Odontologia', itens:[
+  {grupo:'Clínica geral', itens:[
     ['Avaliação / consulta inicial', 45], ['Profilaxia (limpeza)', 60], ['Restauração em resina', 60],
-    ['Tratamento de canal (por sessão)', 90], ['Extração simples', 45], ['Clareamento em consultório (sessão)', 90],
-    ['Raspagem periodontal (por sessão)', 60], ['Aplicação de flúor / selante', 30], ['Atendimento de urgência', 45],
-    ['Retorno / manutenção', 30],
+    ['Extração simples', 45], ['Aplicação de flúor / selante', 30], ['Atendimento de urgência', 45],
+    ['Radiografia periapical', 15], ['Retorno / manutenção', 30],
+  ]},
+  {grupo:'Endodontia e periodontia', itens:[
+    ['Tratamento de canal (completo)', 90, {s:2}], ['Retratamento de canal', 90, {s:3}],
+    ['Raspagem periodontal (por quadrante)', 60], ['Cirurgia periodontal / gengivoplastia', 90],
+  ]},
+  {grupo:'Cirurgia e implante', itens:[
+    ['Extração de siso', 60], ['Implante (cirurgia)', 90], ['Enxerto ósseo', 90],
+    ['Prótese sobre implante (coroa)', 60, {s:3, lab:true}], ['Protocolo sobre implantes', 120, {s:4, lab:true}],
+  ]},
+  {grupo:'Prótese e estética', itens:[
+    ['Coroa / prótese fixa (por dente)', 60, {s:3, lab:true}], ['Faceta ou lente de contato (por dente)', 90, {s:2, lab:true}],
+    ['Prótese total (dentadura)', 60, {s:5, lab:true}], ['Prótese parcial removível', 60, {s:4, lab:true}],
+    ['Clareamento em consultório', 90, {s:2}], ['Clareamento caseiro (moldeira + gel)', 30, {s:2, lab:true}],
+  ]},
+  {grupo:'Ortodontia', itens:[
+    ['Instalação de aparelho fixo', 90, {lab:true}], ['Manutenção ortodôntica (mensalidade)', 30, {mensal:true}],
+    ['Alinhadores (tratamento)', 45, {s:6, lab:true}], ['Contenção', 30, {lab:true}],
+  ]},
+  {grupo:'Outras áreas', itens:[
+    ['Odontopediatria (consulta)', 45], ['Toxina botulínica', 45], ['Preenchimento facial', 60],
+    ['Placa de bruxismo', 45, {s:2, lab:true}],
   ]},
   {grupo:'Outros atendimentos', itens:[
     ['Consulta', 60], ['Retorno', 30], ['Sessão', 60], ['Teleconsulta (online)', 45],
@@ -2776,6 +2857,8 @@ function buildCalcPrestador(wrap, body){
   const $ = (id) => document.getElementById(id);
   const setTxt = (id, t) => { const e = $(id); if (e) e.textContent = t; };
   function calc(){ return computeCalcAll('prestador', st.calcular, computeHora('prestador', st), st); }
+  // Redesenha a etapa inteira mantendo a posição da tela (quando muda o que aparece nas configurações).
+  function rerender(){ const y = window.scrollY; render(); requestAnimationFrame(() => window.scrollTo(0, y)); }
 
   // ---------- configurações gerais ----------
   const gbox = el('div', {class:'svc-global'});
@@ -2787,8 +2870,8 @@ function buildCalcPrestador(wrap, body){
     gbox.appendChild(r);
   };
   gRow('Imposto', 'Simples Nacional, ISS, carnê-leão… em % do que você recebe.', 'impostos');
-  gRow('Taxa da maquininha / cartão', 'Média do que a maquininha desconta.', 'cartao');
-  gRow('Comissão', 'Se você paga comissão a alguém por atendimento. Senão, deixe 0.', 'comissao');
+  if (!g.pagAtivo) gRow('Taxa da maquininha / cartão', 'Média do que a maquininha desconta.', 'cartao');
+  gRow('Comissão', 'Se você paga comissão a alguém por atendimento (ex.: auxiliar, indicação). Senão, deixe 0.', 'comissao');
   gRow('Margem de lucro desejada', 'Quanto DO PREÇO vira lucro (não é "% a mais sobre o custo"). Ex.: margem de 30% num serviço de R$ 100 = R$ 30 de lucro. 20% a 40% é comum.', 'margem');
   gbox.appendChild(el('div', {id:'svc-global-aviso', class:'svc-diff', style:'display:none;'}));
   gbox.appendChild(el('div', {id:'svc-global-max', class:'help'}, ['']));
@@ -2797,6 +2880,53 @@ function buildCalcPrestador(wrap, body){
   convChk.addEventListener('change', () => { g.convenio = convChk.checked; persist(); rebuild(); });
   gbox.appendChild(el('label', {for:'svc-convenio', class:'rendas-toggle', style:'margin-top:8px;'}, [convChk,
     el('span', {}, [el('b',{},['Atendo convênio']), el('div',{class:'help'},['Marque pra informar, em cada serviço, quanto o convênio retém (repasse).'])])]));
+
+  // Clínica de terceiros
+  const terChk = el('input', {type:'checkbox', id:'svc-terceiros'});
+  terChk.checked = !!g.terceiros;
+  terChk.addEventListener('change', () => { g.terceiros = terChk.checked; persist(); rerender(); });
+  gbox.appendChild(el('label', {for:'svc-terceiros', class:'rendas-toggle', style:'margin-top:8px;'}, [terChk,
+    el('span', {}, [el('b',{},['Atendo na clínica de outra pessoa (divido o valor)']), el('div',{class:'help'},['Muito comum: a clínica fica com 40% a 50% de cada atendimento e entra com a estrutura.'])])]));
+  if (g.terceiros){
+    const tb = el('div', {class:'svc-sub'});
+    const r1 = el('div', {class:'field-row'});
+    r1.appendChild(el('label', {}, ['Quanto fica com a clínica', el('div',{class:'help'},['Em % do valor que o paciente paga. Ex.: divisão 50/50 = 50%; 60% pra você e 40% pra clínica = 40%.'])]));
+    r1.appendChild(numberInput({value:g.splitClinica, kind:'pct', onInput:(n)=>{ g.splitClinica = n; persist(); refreshAll(); }}));
+    tb.appendChild(r1);
+    const matChk = el('input', {type:'checkbox', id:'svc-matclinica'});
+    matChk.checked = !!g.materialClinica;
+    matChk.addEventListener('change', () => { g.materialClinica = matChk.checked; persist(); rebuild(); });
+    tb.appendChild(el('label', {for:'svc-matclinica', class:'rendas-toggle'}, [matChk, el('span', {}, ['A clínica fornece o material (não sai do meu bolso)'])]));
+    tb.appendChild(el('div', {class:'help'}, ['Em "Meu Negócio", deixe só os custos que são seus (CRO, seguro, contador, cursos). Aluguel, secretária e equipamentos são da clínica.']));
+    gbox.appendChild(tb);
+  }
+
+  // Formas de pagamento
+  const pagChk = el('input', {type:'checkbox', id:'svc-pag'});
+  pagChk.checked = !!g.pagAtivo;
+  pagChk.addEventListener('change', () => { g.pagAtivo = pagChk.checked; persist(); rerender(); });
+  gbox.appendChild(el('label', {for:'svc-pag', class:'rendas-toggle', style:'margin-top:8px;'}, [pagChk,
+    el('span', {}, [el('b',{},['Detalhar formas de pagamento (Pix, cartão, parcelado)']), el('div',{class:'help'},['O parcelado custa bem mais na maquininha. Marque pra ver o preço certo em cada forma e quanto de desconto dá pra dar no Pix.'])])]));
+  if (g.pagAtivo){
+    const pb = el('div', {class:'svc-sub'});
+    const pr = (label, help, key, kind, dec) => {
+      const r = el('div', {class:'field-row'});
+      r.appendChild(el('label', {}, [label, help ? el('div',{class:'help'},[help]) : null]));
+      r.appendChild(numberInput({value:g[key], kind, dec, onInput:(n)=>{ g[key] = n; persist(); refreshAll(); }}));
+      pb.appendChild(r);
+    };
+    pb.appendChild(el('div', {class:'help', style:'margin:0 0 4px;'}, [el('b', {}, ['Como seus pacientes pagam (mais ou menos):'])]));
+    pr('Pix / dinheiro', 'Sem taxa.', 'pagPix', 'pct');
+    pr('Débito ou crédito à vista', null, 'pagAvista', 'pct');
+    pr('Crédito parcelado', null, 'pagParc', 'pct');
+    pb.appendChild(el('div', {class:'help', id:'svc-pag-soma'}, ['']));
+    pb.appendChild(el('div', {class:'help', style:'margin:8px 0 4px;'}, [el('b', {}, ['Taxas da sua maquininha:'])]));
+    pr('Taxa no débito / crédito à vista', 'Normalmente entre 1% e 3,5%.', 'taxaAvista', 'pct');
+    pr('Em até quantas vezes você parcela', null, 'parcelas', 'num', 0);
+    pr('Taxa no parcelado (com antecipação)', 'Some a taxa do parcelado + a antecipação (receber tudo de uma vez). Em 10x a 12x costuma dar entre 8% e 15%. Confira no app da sua maquininha.', 'taxaParc', 'pct');
+    pb.appendChild(el('div', {class:'help', id:'svc-pag-media'}, ['']));
+    gbox.appendChild(pb);
+  }
   wrap.appendChild(gbox);
 
   // ---------- cartões ----------
@@ -2828,9 +2958,38 @@ function buildCalcPrestador(wrap, body){
     const q = (label, help, input) => {
       qs.appendChild(el('div', {class:'svc-q'}, [el('label', {}, [label, help ? el('div',{class:'help'},[help]) : null]), input]));
     };
-    q('Quantos por mês?', null, numberInput({value:r.atend, kind:'num', dec:0, onInput:(n)=>{ r.atend=n; persist(); refreshAll(); }}));
-    q('Quanto tempo leva? (minutos)', 'Contando preparo e prontuário.', numberInput({value:Math.round(parseBR(r.dur)*60), kind:'num', dec:0, onInput:(n)=>{ r.dur = n/60; persist(); refreshAll(); }}));
-    q('Quanto você cobra hoje? (R$)', 'Particular. Deixe 0 se ainda não cobra.', numberInput({value:r.cobraHoje||0, kind:'brl', onInput:(n)=>{ r.cobraHoje=n; persist(); refreshAll(); }}));
+    const tipo = r.tipo || 'unico';
+    const tipoBox = el('div', {class:'svc-q'});
+    tipoBox.appendChild(el('label', {}, ['Como é cobrado']));
+    const tSeg = el('div', {class:'svc-seg'});
+    [['unico','Uma sessão'],['sessoes','Várias sessões'],['mensal','Mensalidade']].forEach(([k, lbl]) => {
+      const b = el('button', {type:'button', class: tipo === k ? 'on' : ''}, [lbl]);
+      b.addEventListener('click', () => { r.tipo = k; if (k === 'sessoes' && !(parseBR(r.sessoes) > 1)) r.sessoes = 2; persist(); rebuild(); });
+      tSeg.appendChild(b);
+    });
+    tipoBox.appendChild(tSeg);
+    tipoBox.appendChild(el('div', {class:'help', style:'margin:0;'}, [
+      tipo === 'sessoes' ? 'Tratamento completo (canal, prótese, alinhador…): o preço é do tratamento inteiro.'
+      : tipo === 'mensal' ? 'Ortodontia e outros acompanhamentos que o paciente paga todo mês.'
+      : 'Atendimento resolvido numa consulta.']));
+    qs.appendChild(tipoBox);
+    if (tipo === 'sessoes'){
+      q('Quantas sessões tem o tratamento?', null, numberInput({value:r.sessoes||2, kind:'num', dec:0, onInput:(n)=>{ r.sessoes=n; persist(); refreshAll(); }}));
+      q('Quantos tratamentos você FECHA por mês?', 'Tratamentos novos que começam no mês.', numberInput({value:r.atend, kind:'num', dec:0, onInput:(n)=>{ r.atend=n; persist(); refreshAll(); }}));
+      q('Quanto tempo leva CADA sessão? (minutos)', 'Contando preparo e prontuário.', numberInput({value:Math.round(parseBR(r.dur)*60), kind:'num', dec:0, onInput:(n)=>{ r.dur = n/60; persist(); refreshAll(); }}));
+      q('Quanto você cobra hoje pelo tratamento? (R$)', 'Valor total, particular. Deixe 0 se ainda não cobra.', numberInput({value:r.cobraHoje||0, kind:'brl', onInput:(n)=>{ r.cobraHoje=n; persist(); refreshAll(); }}));
+    } else if (tipo === 'mensal'){
+      q('Quantos pacientes ativos pagam por mês?', 'Ex.: pacientes de aparelho em manutenção.', numberInput({value:r.atend, kind:'num', dec:0, onInput:(n)=>{ r.atend=n; persist(); refreshAll(); }}));
+      q('Quanto tempo leva a consulta do mês? (minutos)', null, numberInput({value:Math.round(parseBR(r.dur)*60), kind:'num', dec:0, onInput:(n)=>{ r.dur = n/60; persist(); refreshAll(); }}));
+      q('Quanto você cobra hoje de mensalidade? (R$)', 'Deixe 0 se ainda não cobra.', numberInput({value:r.cobraHoje||0, kind:'brl', onInput:(n)=>{ r.cobraHoje=n; persist(); refreshAll(); }}));
+    } else {
+      q('Quantos por mês?', null, numberInput({value:r.atend, kind:'num', dec:0, onInput:(n)=>{ r.atend=n; persist(); refreshAll(); }}));
+      q('Quanto tempo leva? (minutos)', 'Contando preparo e prontuário.', numberInput({value:Math.round(parseBR(r.dur)*60), kind:'num', dec:0, onInput:(n)=>{ r.dur = n/60; persist(); refreshAll(); }}));
+      q('Quanto você cobra hoje? (R$)', 'Particular. Deixe 0 se ainda não cobra.', numberInput({value:r.cobraHoje||0, kind:'brl', onInput:(n)=>{ r.cobraHoje=n; persist(); refreshAll(); }}));
+    }
+    q(tipo === 'sessoes' ? 'Laboratório / prótese no tratamento todo (R$)' : 'Laboratório / prótese (R$)',
+      r.lab ? '💡 Este procedimento costuma ter custo de laboratório (protético). Coloque o valor que você paga.' : 'O que você paga ao protético ou outro custo extra deste procedimento. Deixe 0 se não tiver.',
+      numberInput({value:r.outros||0, kind:'brl', onInput:(n)=>{ r.outros=n; persist(); refreshAll(); }}));
 
     // material
     const mat = el('div', {class:'svc-q'});
@@ -2843,9 +3002,11 @@ function buildCalcPrestador(wrap, body){
     bValor.addEventListener('click', () => { r.matModo = 'valor'; persist(); rebuild(); });
     modes.appendChild(bAuto); modes.appendChild(bValor);
     mat.appendChild(modes);
-    if (auto){
+    if (auto && g.terceiros && g.materialClinica){
+      mat.appendChild(el('div', {class:'help', style:'margin:0;'}, ['A clínica fornece o material — não entra no seu custo.']));
+    } else if (auto){
       mat.appendChild(el('div', {class:'help', style:'margin:0;'}, [el('b', {id:'svc-mat-'+i, class:'mono', style:'color:var(--ink);font-size:14px;'}, ['']), ' ', el('span', {id:'svc-mat-conta-'+i}, [''])]));
-      if (!parseBR(st.materialMensal)){
+      if (!parseBR(st.materialMensal) && !(g.terceiros && g.materialClinica)){
         mat.appendChild(el('div', {class:'help'}, ['Informe o gasto mensal com materiais pra calcular. ',
           el('button', {class:'btn btn-secondary btn-sm', type:'button', onclick:()=>goStep('insumos')}, ['Ir para Insumos'])]));
       }
@@ -2858,10 +3019,13 @@ function buildCalcPrestador(wrap, body){
 
     // resultado
     const res = el('div', {class:'svc-res'});
-    res.appendChild(el('div', {class:'svc-res-lbl'}, ['Preço justo (particular)']));
+    res.appendChild(el('div', {class:'svc-res-lbl'}, [tipo === 'sessoes' ? 'Preço justo do tratamento (particular)' : tipo === 'mensal' ? 'Mensalidade justa (particular)' : 'Preço justo (particular)']));
     res.appendChild(el('div', {class:'svc-res-val', id:'svc-preco-'+i}, ['']));
+    if (tipo === 'sessoes') res.appendChild(el('div', {class:'help', id:'svc-porsessao-'+i}, ['']));
+    if (g.pagAtivo) res.appendChild(el('div', {class:'svc-pag', id:'svc-pag-'+i}, ['']));
     if (g.convenio) res.appendChild(el('div', {class:'help', id:'svc-convline-'+i}, ['']));
-    res.appendChild(el('div', {class:'svc-res-line'}, ['Sobra pra você por atendimento: ', el('b', {id:'svc-liq-'+i, class:'mono'}, [''])]));
+    if (g.terceiros) res.appendChild(el('div', {class:'help', id:'svc-split-'+i}, ['']));
+    res.appendChild(el('div', {class:'svc-res-line'}, [tipo === 'sessoes' ? 'Sobra pra você por tratamento: ' : tipo === 'mensal' ? 'Sobra pra você por paciente/mês: ' : 'Sobra pra você por atendimento: ', el('b', {id:'svc-liq-'+i, class:'mono'}, [''])]));
     res.appendChild(el('div', {class:'svc-status', id:'svc-status-'+i}, ['']));
     res.appendChild(el('div', {class:'svc-diff', id:'svc-diff-'+i, style:'display:none;'}));
     cols.appendChild(res);
@@ -2871,13 +3035,12 @@ function buildCalcPrestador(wrap, body){
     const det = el('details', {class:'svc-det'});
     det.appendChild(el('summary', {}, ['Mais detalhes']));
     const dRow = (label, help, input) => det.appendChild(el('div', {class:'field-row'}, [el('label', {}, [label, help ? el('div',{class:'help'},[help]) : null]), input]));
-    dRow('Outros custos por atendimento (R$)', 'Laboratório, prótese, material especial…', numberInput({value:r.outros||0, kind:'brl', onInput:(n)=>{ r.outros=n; persist(); refreshAll(); }}));
     if (g.convenio) dRow('Repasse do convênio', 'Quanto o convênio retém, em %. Deixe 0 se este serviço for só particular.', numberInput({value:r.repasse||0, kind:'pct', onInput:(n)=>{ r.repasse=n; persist(); refreshAll(); }}));
     const padChk = el('input', {type:'checkbox'});
     padChk.checked = r.usaPadrao !== false;
     padChk.addEventListener('change', () => {
       r.usaPadrao = padChk.checked;
-      if (!r.usaPadrao){ ['impostos','cartao','comissao','margem'].forEach(k => { r[k] = g[k]; }); }
+      if (!r.usaPadrao){ ['impostos','comissao','margem'].forEach(k => { r[k] = g[k]; }); r.cartao = taxaCartaoMedia(g); }
       persist(); rebuild();
     });
     det.appendChild(el('label', {class:'rendas-toggle', style:'margin-top:8px;'}, [padChk, el('span', {}, ['Usar as configurações gerais (imposto, cartão, comissão e margem)'])]));
@@ -2886,7 +3049,7 @@ function buildCalcPrestador(wrap, body){
         dRow(lbl + ' (só deste serviço)', null, numberInput({value:r[k]||0, kind:'pct', onInput:(n)=>{ r[k]=n; persist(); refreshAll(); }})));
     }
     const info = el('div', {class:'svc-info'});
-    [['Custo do seu tempo','svc-tempo-'],['Custo total por atendimento','svc-direto-'],['Horas no mês','svc-horas-'],['Receita no mês','svc-receita-']].forEach(([lbl,id]) =>
+    [['Custo do seu tempo','svc-tempo-'],[tipo === 'sessoes' ? 'Custo total do tratamento' : 'Custo total por atendimento','svc-direto-'],['Horas no mês','svc-horas-'],['Receita no mês','svc-receita-']].forEach(([lbl,id]) =>
       info.appendChild(el('div', {}, [el('span', {class:'help', style:'margin:0;'}, [lbl]), el('b', {class:'mono', id:id+i}, [''])])));
     det.appendChild(info);
     root.appendChild(det);
@@ -2906,19 +3069,25 @@ function buildCalcPrestador(wrap, body){
   const addBtn = el('button', {class:'btn btn-primary btn-sm', type:'button'}, ['+ Adicionar procedimento']);
   const picker = el('div', {class:'svc-picker', style:'display:none;'});
   addBtn.addEventListener('click', () => { picker.style.display = picker.style.display === 'none' ? '' : 'none'; });
-  const novo = (nome, min) => {
+  const novo = (nome, min, op) => {
+    op = op || {};
     st.calcular.push({nome, atend:0, dur:min/60, insumos:0, outros:0, impostos:g.impostos, repasse:0, comissao:g.comissao, cartao:g.cartao, margem:g.margem,
-      usaPadrao:true, matModo:'auto', cobraHoje:0});
+      usaPadrao:true, matModo:'auto', cobraHoje:0,
+      tipo: op.mensal ? 'mensal' : (op.s > 1 ? 'sessoes' : 'unico'), sessoes: op.s || 1, lab: !!op.lab});
     picker.style.display = 'none'; persist(); rebuild();
   };
   SERVICOS_PRONTOS.forEach(grp => {
     picker.appendChild(el('div', {class:'cat-title', style:'margin-top:8px;'}, [grp.grupo]));
     const chips = el('div', {class:'svc-chips'});
-    grp.itens.forEach(([nome, min]) => chips.appendChild(el('button', {type:'button', class:'svc-chip', onclick:()=>novo(nome, min)}, [nome, el('span', {class:'help', style:'margin:0 0 0 6px;display:inline;'}, ['~' + min + ' min'])])));
+    grp.itens.forEach(([nome, min, op]) => {
+      op = op || {};
+      const dica = op.mensal ? '~' + min + ' min/mês' : (op.s > 1 ? op.s + ' sessões de ~' + min + ' min' : '~' + min + ' min');
+      chips.appendChild(el('button', {type:'button', class:'svc-chip', onclick:()=>novo(nome, min, op)}, [nome, el('span', {class:'help', style:'margin:0 0 0 6px;display:inline;'}, [dica])]));
+    });
     picker.appendChild(chips);
   });
   picker.appendChild(el('button', {type:'button', class:'svc-chip', style:'margin-top:8px;', onclick:()=>novo('', 60)}, ['✏️ Outro serviço (em branco)']));
-  picker.appendChild(el('p', {class:'help'}, ['As durações são só sugestões — ajuste ao seu ritmo de atendimento.']));
+  picker.appendChild(el('p', {class:'help'}, ['As durações e o número de sessões são só sugestões — ajuste ao seu ritmo de atendimento.']));
   addBox.appendChild(addBtn); addBox.appendChild(picker);
 
   function refreshAll(){
@@ -2934,6 +3103,7 @@ function buildCalcPrestador(wrap, body){
           d0.style.display = ''; d0.className = 'svc-diff falta';
           const ef = c;
           d0.innerHTML = '<b>Imposto ' + fmtNum(parseBR(ef.impostos)*100,1) + '% + cartão ' + fmtNum(parseBR(ef.cartao)*100,1) + '% + comissão ' + fmtNum(parseBR(ef.comissao)*100,1) + '%'
+            + (parseBR(ef.split) > 0 ? ' + parte da clínica ' + fmtNum(parseBR(ef.split)*100,1) + '%' : '')
             + (parseBR(ef.repasse) > 0 ? ' + repasse ' + fmtNum(parseBR(ef.repasse)*100,1) + '%' : '')
             + ' + margem ' + fmtNum(parseBR(ef.margem)*100,1) + '% = ' + fmtNum(c._somaPct*100,1) + '%.</b> Tudo isso sai de dentro do preço, então precisa somar menos de 100%. Diminua a margem.';
         }
@@ -2941,10 +3111,26 @@ function buildCalcPrestador(wrap, body){
       const cl = $('svc-convline-'+i);
       if (cl) cl.textContent = parseBR(c.repasse) > 0 ? 'Preço pra convênio: ' + fmtBRL(c._precoConvenio) : 'Serviço particular (sem repasse de convênio).';
       setTxt('svc-liq-'+i, inval ? '—' : fmtBRL(c._liquido));
+      if (c._sessoes > 1) setTxt('svc-porsessao-'+i, inval ? '' : c._sessoes + ' sessões · ≈ ' + fmtBRL(c._precoParticular / c._sessoes) + ' por sessão');
+      const sp = $('svc-split-'+i);
+      if (sp) sp.textContent = inval ? '' : 'Desse valor, ' + fmtBRL(c._precoParticular * parseBR(c.split)) + ' ficam com a clínica (' + fmtNum(parseBR(c.split)*100, 0) + '%).';
+      const pg = $('svc-pag-'+i);
+      if (pg){
+        if (inval || !c._precos){ pg.innerHTML = ''; }
+        else {
+          const p = c._precos;
+          const desc = p.parcelado > 0 ? 1 - p.pix / p.parcelado : 0;
+          pg.innerHTML = '<div><span>Pix / dinheiro</span><b class="mono">' + fmtBRL(p.pix) + '</b></div>'
+            + '<div><span>Cartão à vista</span><b class="mono">' + fmtBRL(p.avista) + '</b></div>'
+            + '<div><span>Parcelado em até ' + p.parcelas + 'x</span><b class="mono">' + fmtBRL(p.parcelado) + '</b></div>'
+            + (p.parcelas > 1 ? '<div class="help" style="margin:0;">' + p.parcelas + 'x de ' + fmtBRL(p.parcelado / p.parcelas) + '</div>' : '')
+            + (desc > 0.005 ? '<div class="svc-pag-dica">💡 Se a sua tabela for o preço parcelado, dá pra dar até <b>' + fmtNum(desc*100, 0) + '% de desconto no Pix</b> sem perder nada.</div>' : '');
+        }
+      }
       setTxt('svc-status-'+i, statusFrase(c._status));
       const se = $('svc-status-'+i); if (se) se.className = 'svc-status st-' + (c._status||'none');
       setTxt('svc-mat-'+i, fmtBRL(parseBR(c.insumos)));
-      setTxt('svc-mat-conta-'+i, parseBR(st.materialMensal) ? '(' + fmtBRL(taxaMaterialHora(st)) + '/h × ' + fmtNum(parseBR(c.dur)*60, 0) + ' min)' : '');
+      setTxt('svc-mat-conta-'+i, parseBR(st.materialMensal) ? '(' + fmtBRL(taxaMaterialHora(st)) + '/h × ' + fmtNum(parseBR(c.dur)*60, 0) + ' min' + (c._sessoes > 1 ? ' × ' + c._sessoes + ' sessões' : '') + ')' : '');
       setTxt('svc-tempo-'+i, fmtBRL(c._custoTempo));
       setTxt('svc-direto-'+i, fmtBRL(c._custoDireto));
       setTxt('svc-horas-'+i, fmtNum(c._horasTotais, 1) + ' h');
@@ -2966,14 +3152,19 @@ function buildCalcPrestador(wrap, body){
         } else d.style.display = 'none';
       }
     });
-    const somaG = parseBR(g.impostos) + parseBR(g.cartao) + parseBR(g.comissao);
+    const somaG = parseBR(g.impostos) + taxaCartaoMedia(g) + parseBR(g.comissao) + (g.terceiros ? parseBR(g.splitClinica) : 0);
     const maxMargem = Math.max(0, 1 - somaG);
-    setTxt('svc-global-max', 'Com esse imposto, cartão e comissão, a margem máxima possível é ' + fmtNum(maxMargem*100, 0) + '% — e o ideal é ficar bem abaixo disso.');
+    setTxt('svc-global-max', 'Com esse imposto, cartão' + (g.terceiros ? ', comissão e a parte da clínica' : ' e comissão') + ', a margem máxima possível é ' + fmtNum(maxMargem*100, 0) + '% — e o ideal é ficar bem abaixo disso.');
+    if (g.pagAtivo){
+      const soma = parseBR(g.pagPix) + parseBR(g.pagAvista) + parseBR(g.pagParc);
+      setTxt('svc-pag-soma', Math.abs(soma - 1) > 0.005 ? '⚠️ Essas três somam ' + fmtNum(soma*100, 0) + '%. O ideal é somarem 100% (o app faz a proporção mesmo assim).' : '✓ Somam 100%.');
+      setTxt('svc-pag-media', 'Taxa média de cartão que entra no preço justo: ' + fmtNum(taxaCartaoMedia(g)*100, 1) + '%.');
+    }
     const ga = $('svc-global-aviso');
     if (ga){
       if (somaG + parseBR(g.margem) >= 1){
         ga.style.display = ''; ga.className = 'svc-diff falta';
-        ga.innerHTML = '<b>Imposto + cartão + comissão + margem = ' + fmtNum((somaG + parseBR(g.margem))*100, 1) + '%.</b> Precisa ficar abaixo de 100%, senão não existe preço possível. Diminua a margem para menos de ' + fmtNum(maxMargem*100, 0) + '%.';
+        ga.innerHTML = '<b>Imposto + cartão + comissão' + (g.terceiros ? ' + parte da clínica' : '') + ' + margem = ' + fmtNum((somaG + parseBR(g.margem))*100, 1) + '%.</b> Precisa ficar abaixo de 100%, senão não existe preço possível. Diminua a margem para menos de ' + fmtNum(maxMargem*100, 0) + '%.';
       } else ga.style.display = 'none';
     }
     setTxt('svc-tot-atend', fmtNum(totals.atendimentos, 0));
